@@ -16,13 +16,19 @@ A Next.js web application that uses OpenAI GPT-4 to extract structured data from
   - Line item descriptions
   - Total amount
   - Currency
+- **Vendor Management**: Intelligent vendor detection and custom templates:
+  - Automatic vendor detection from invoice text
+  - Custom extraction templates per vendor
+  - Field mappings and validation rules
+  - Three-strategy detection (identifier, AI, fuzzy matching)
 - **Bulk Operations**: Select multiple invoices for:
   - Bulk delete
   - Bulk export
   - Bulk retry (for failed processes)
+  - Bulk vendor assignment
 - **Data Display**: Interactive table with sorting, filtering, and pagination
 - **Multiple Export Formats**: Export processed data to Excel (.xlsx), CSV, or JSON
-- **Persistent Storage**: SQLite database with user isolation
+- **Persistent Storage**: PostgreSQL database with user isolation and scalability
 - **Responsive UI**: Modern, clean interface with dark mode support
 
 ## Tech Stack
@@ -30,7 +36,7 @@ A Next.js web application that uses OpenAI GPT-4 to extract structured data from
 - **Framework**: Next.js 15 with App Router
 - **Language**: TypeScript
 - **Authentication**: NextAuth.js v5 with Google OAuth
-- **Database**: SQLite with Prisma ORM
+- **Database**: PostgreSQL with Prisma ORM (SQLite supported for local development)
 - **AI**: OpenAI GPT-4 API
 - **PDF Processing**: pdf-parse
 - **Email**: Nodemailer (SMTP)
@@ -41,6 +47,7 @@ A Next.js web application that uses OpenAI GPT-4 to extract structured data from
 ## Prerequisites
 
 - Node.js 18+ installed
+- PostgreSQL 12+ installed and running
 - OpenAI API key ([Get one here](https://platform.openai.com/api-keys))
 - (Optional) Google OAuth credentials for Google sign-in
 - (Optional) SMTP server credentials for email features
@@ -61,8 +68,10 @@ Edit the `.env.local` file with your configuration:
 # OpenAI Configuration (Required)
 OPENAI_API_KEY=your_openai_api_key_here
 
-# Database
-DATABASE_URL="file:./dev.db"
+# Database (PostgreSQL)
+DATABASE_URL="postgresql://user:password@localhost:5432/invoice_scanner?schema=public"
+# For local development with SQLite (alternative):
+# DATABASE_URL="file:./dev.db"
 NODE_ENV=development
 
 # NextAuth (Required)
@@ -106,12 +115,27 @@ SMTP_FROM_EMAIL=your_email@gmail.com
 
 ### 3. Setup Database
 
-The database has already been initialized, but if you need to reset it:
+**PostgreSQL Setup** (recommended for production):
 
+1. Create a PostgreSQL database:
 ```bash
-npx prisma migrate reset
-npx prisma generate
+psql -U postgres -c "CREATE DATABASE invoice_scanner;"
 ```
+
+2. Update `DATABASE_URL` in `.env.local` with your PostgreSQL credentials
+
+3. Initialize the database schema:
+```bash
+npx prisma generate
+npx prisma db push
+# Or use migrations if you have CREATEDB permission:
+# npx prisma migrate dev --name init
+```
+
+**Alternative: SQLite for Development**:
+- Set `DATABASE_URL="file:./dev.db"` in `.env.local`
+- Change `provider = "postgresql"` to `provider = "sqlite"` in `prisma/schema.prisma`
+- Run `npx prisma generate && npx prisma db push`
 
 ### 4. Run Development Server
 
@@ -287,20 +311,28 @@ This application uses OpenAI's **GPT-4o-mini** API which is highly cost-effectiv
 
 ### Database Issues
 
+- **PostgreSQL Connection Errors**
+  - Ensure PostgreSQL is running: `pg_isready`
+  - Verify DATABASE_URL format: `postgresql://user:password@localhost:5432/database?schema=public`
+  - Check PostgreSQL service status
+
 - **Prisma errors**
   - Run `npx prisma generate` to regenerate the client
-  - Run `npx prisma migrate dev` if schema changed
+  - Run `npx prisma db push` to sync schema (or `npx prisma migrate dev` with CREATEDB permission)
+  - For shadow database errors, use `npx prisma db push` instead of migrations
 
 ## Future Enhancements
 
+- Background job processing for large PDFs
+- Cloud storage integration (S3, Azure Blob) for production deployments
 - GPT-4 Vision support for scanned documents
-- Cloud storage integration (S3, Azure Blob)
-- Invoice templates and vendor management
 - Advanced analytics dashboard
 - Additional OAuth providers (Microsoft, Apple)
 - Webhook notifications
-- Mobile app support
+- Mobile app support (PWA)
 - API documentation (Swagger/OpenAPI)
+
+See [BACKLOG.md](BACKLOG.md) for detailed roadmap and priorities.
 
 ## License
 
