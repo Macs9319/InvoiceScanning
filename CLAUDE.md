@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Invoice Scanner is a Next.js 15 application that uses OpenAI GPT-4o-mini to extract structured data from invoice and receipt PDFs. The app features user authentication with NextAuth.js, multi-user support with data isolation, batch processing, persistent storage with SQLite/Prisma, multi-format exports (Excel, CSV, JSON), advanced filtering and search, dark mode theming, error handling with retry functionality, and detailed invoice viewing with loading states.
+Invoice Scanner is a Next.js 15 application that uses OpenAI GPT-4o-mini to extract structured data from invoice and receipt PDFs. The app features user authentication with NextAuth.js, multi-user support with data isolation, batch processing, persistent storage with PostgreSQL/Prisma, multi-format exports (Excel, CSV, JSON), advanced filtering and search, dark mode theming, error handling with retry functionality, vendor management with AI-powered detection, and detailed invoice viewing with loading states.
 
 ## Development Commands
 
@@ -26,9 +26,14 @@ npm run lint
 
 # Database operations
 npx prisma generate          # Regenerate Prisma client after schema changes
-npx prisma migrate dev       # Create and apply migrations
+npx prisma migrate dev       # Create and apply migrations (requires CREATEDB permission)
+npx prisma db push           # Push schema without migrations (use if no CREATEDB permission)
 npx prisma migrate reset     # Reset database (WARNING: deletes all data)
 npx prisma studio            # Open Prisma Studio GUI for database inspection
+
+# PostgreSQL-specific commands
+psql -U user -d database -c "\dt"    # List all tables
+psql -U user -d database -c "\di"    # List all indexes
 ```
 
 ## Architecture Overview
@@ -344,11 +349,20 @@ npx prisma generate                              # Regenerates TypeScript types
 
 **Setting up a new PostgreSQL database**:
 ```bash
-# Create initial migration from schema
+# First, ensure your DATABASE_URL is set in both .env and .env.local
+# Format: postgresql://user:password@localhost:5432/database_name?schema=public
+
+# Generate Prisma client
+npx prisma generate
+
+# Option 1: Create migrations (requires CREATEDB permission for shadow database)
 npx prisma migrate dev --name init
 
-# Or push schema without creating migrations (development only)
+# Option 2: Push schema without migrations (recommended if no CREATEDB permission)
 npx prisma db push
+
+# Verify setup
+psql -U your_user -d your_database -c "\dt"  # List all tables
 ```
 
 Include related data in queries:
