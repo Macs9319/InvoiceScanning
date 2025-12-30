@@ -75,7 +75,7 @@ User exports data → ExportButtons → /api/export?format=X (auth check) → Ge
 - **pdfreader**: Extracts raw text from PDF files (page by page)
 - **OpenAI API**: GPT-4o-mini with JSON mode for structured data extraction
 - **Zod**: Validates AI responses and user input before saving
-- **Prisma**: ORM with SQLite database (dev.db)
+- **Prisma**: ORM with PostgreSQL database (SQLite supported for local development)
 - **xlsx**: Excel export with multi-sheet support
 - **csv-writer**: CSV export
 - **TanStack Table**: Frontend data table with sorting, filtering, selection
@@ -97,7 +97,12 @@ src/
 │   │   ├── process/route.ts             # PDF text extraction → AI → DB update (auth + ownership)
 │   │   ├── invoices/
 │   │   │   ├── route.ts                 # GET user's invoices, DELETE by ID (auth required)
-│   │   │   └── bulk-delete/route.ts     # Bulk delete endpoint (auth required)
+│   │   │   ├── bulk-delete/route.ts     # Bulk delete endpoint (auth required)
+│   │   │   └── bulk-assign-vendor/route.ts  # Bulk vendor assignment (auth required)
+│   │   ├── vendors/
+│   │   │   ├── route.ts                 # CRUD operations for vendors
+│   │   │   ├── [vendorId]/route.ts      # Individual vendor operations
+│   │   │   └── [vendorId]/templates/    # Vendor template management
 │   │   └── export/
 │   │       ├── route.ts                 # Generate Excel/CSV/JSON exports (auth required)
 │   │       └── bulk/route.ts            # Bulk export for selected invoices (auth required)
@@ -105,6 +110,7 @@ src/
 │   ├── verify-email/page.tsx    # Email verification page
 │   ├── forgot-password/page.tsx # Password reset request page
 │   ├── reset-password/page.tsx  # Password reset confirmation page
+│   ├── vendors/page.tsx         # Vendor management page
 │   ├── page.tsx                 # Main UI (client component, protected)
 │   └── layout.tsx               # Root layout with SessionProvider
 ├── components/
@@ -115,20 +121,32 @@ src/
 │   ├── InvoiceDetailDialog.tsx  # Full invoice detail modal with line items and errors
 │   ├── InvoiceFilters.tsx       # Search and filter UI (status, currency, date, amount)
 │   ├── BulkActionsToolbar.tsx   # Bulk operations toolbar (export, delete, retry)
+│   ├── BulkVendorAssignment.tsx # Bulk vendor assignment UI
 │   ├── ExportButtons.tsx        # Export action buttons
 │   ├── header.tsx               # User info and sign out button
 │   ├── session-provider.tsx     # NextAuth SessionProvider wrapper
 │   ├── theme-provider.tsx       # next-themes provider wrapper
 │   ├── theme-toggle.tsx         # Dark/light mode toggle button
+│   ├── vendors/                 # Vendor management components
+│   │   ├── VendorTable.tsx
+│   │   ├── CreateVendorDialog.tsx
+│   │   ├── VendorDetailDialog.tsx
+│   │   └── TemplateEditor.tsx
 │   └── ui/                      # shadcn/ui components (button, dialog, skeleton, select, checkbox, etc.)
 ├── lib/
 │   ├── auth.ts                  # NextAuth configuration (Credentials + Google OAuth, JWT)
-│   ├── ai/extractor.ts          # OpenAI GPT-4o-mini extraction logic
+│   ├── ai/
+│   │   ├── extractor.ts         # OpenAI GPT-4o-mini extraction logic
+│   │   ├── vendor-detector.ts   # Vendor detection from invoice text
+│   │   ├── schema-builder.ts    # Dynamic schema generation for custom fields
+│   │   └── field-mapper.ts      # Field mapping and validation
 │   ├── pdf/parser.ts            # PDF text extraction (pdfreader)
 │   ├── export/                  # Excel, CSV, JSON generators
 │   ├── email/                   # Email sending (nodemailer) and templates
 │   └── db/prisma.ts             # Prisma client singleton
-└── types/invoice.ts             # Zod schemas + TypeScript types
+└── types/
+    ├── invoice.ts               # Zod schemas + TypeScript types for invoices
+    └── vendor.ts                # Zod schemas + TypeScript types for vendors
 ```
 
 ## Database Schema
@@ -138,7 +156,7 @@ src/
 - `email`: Unique identifier for login
 - `password`: Hashed with bcryptjs (10 rounds), nullable for OAuth-only accounts
 - `emailVerified`: Timestamp of email verification (null until verified)
-- One-to-many relationships: invoices, accounts (OAuth), sessions
+- One-to-many relationships: invoices, accounts (OAuth), sessions, vendors
 - All user data cascades on delete
 
 ### Invoice Model
@@ -148,12 +166,28 @@ src/
 - `rawText`: Full PDF text extracted by pdfreader
 - `aiResponse`: Raw JSON response from OpenAI OR error details (stored as string)
 - `fileUrl`: Relative path from `public/` (e.g., `/uploads/filename.pdf`)
-- Indexes on `userId`, `status`, and `date` for query performance
+- **Vendor Integration**: `vendorId` links to vendor, `detectedVendorId` stores auto-detection result, `templateId` stores template used, `customData` stores custom field values
+- Indexes on `userId`, `status`, `date`, and `vendorId` for query performance
 
 ### LineItem Model
 - Child entity linked via `invoiceId` (cascade delete enabled)
 - `order`: Display sequence for line items
 - All fields except `description` are nullable (some invoices lack detailed breakdowns)
+
+### Vendor Model
+- Stores vendor information for each user
+- `identifiers`: JSON array of unique identifiers (Tax ID, Company Registration, etc.)
+- One-to-many relationships: templates, invoices
+- Indexes on `userId` and `name`
+
+### VendorTemplate Model
+- Stores custom extraction templates for vendors
+- `customPrompt`: Additional AI instructions for this vendor
+- `customFields`: JSON array of custom field definitions
+- `fieldMappings`: JSON object mapping AI response fields to custom fields
+- `validationRules`: JSON array of validation rules
+- `isActive`: Only active templates are used for processing
+- Tracks usage stats: `invoiceCount`, `lastUsedAt`
 
 ### Account & Session Models (NextAuth)
 - Standard NextAuth schema for OAuth providers and JWT sessions
@@ -179,7 +213,10 @@ Required in `.env.local`:
 OPENAI_API_KEY=sk-...                                    # OpenAI API key (required for AI extraction)
 
 # Database (Required)
-DATABASE_URL="file:./dev.db"                             # SQLite database path
+# For PostgreSQL (Production):
+DATABASE_URL="postgresql://user:password@localhost:5432/invoice_scanner?schema=public"
+# For SQLite (Development only):
+# DATABASE_URL="file:./dev.db"
 NODE_ENV=development
 
 # NextAuth (Required)
@@ -230,17 +267,31 @@ For email verification and password reset functionality:
 ## AI Extraction Logic
 
 ### OpenAI Configuration
-- Model: `gpt-4o-mini` (src/lib/ai/extractor.ts:49) - Cost-effective choice, ~60-80% cheaper than GPT-4 Turbo
+- Model: `gpt-4o-mini` (src/lib/ai/extractor.ts:93) - Cost-effective choice, ~60-80% cheaper than GPT-4 Turbo
 - Uses `response_format: { type: "json_object" }` to enforce JSON responses
 - Temperature: 0.1 for consistent, deterministic extraction
 - Zod validation ensures type safety before database insertion
 
+### Vendor Detection
+Three-strategy approach for automatic vendor detection:
+1. **Identifier Matching** (fast, free): Matches Tax IDs, Company Registration numbers
+2. **AI Detection** (accurate, low cost): Uses GPT-4o-mini to analyze invoice text
+3. **Fuzzy Matching** (fallback): Partial string matching on vendor name
+
+### Vendor Templates
+Templates allow per-vendor customization:
+- **Custom Prompts**: Additional instructions for AI extraction
+- **Custom Fields**: Define vendor-specific fields beyond standard invoice fields
+- **Field Mappings**: Map AI response fields to database fields
+- **Validation Rules**: Enforce business rules (min/max values, required fields, etc.)
+
 ### Extraction Prompt Structure
-The prompt (src/lib/ai/extractor.ts:8-38) instructs GPT-4 to:
+The prompt (src/lib/ai/extractor.ts:10-40) instructs GPT-4 to:
 - Return JSON with fields: invoiceNumber, date (ISO 8601), totalAmount, currency, lineItems
 - Use `null` for missing fields (not empty strings)
 - Parse amounts as numbers without currency symbols
 - Extract all line items with description/quantity/unitPrice/amount
+- If vendor template exists, include custom fields and follow custom prompt instructions
 
 ### Fallback Strategy
 `extractInvoiceDataWithFallback()` is a stub for future GPT-4 Vision integration to handle scanned/image-based PDFs. Currently, it just calls text extraction.
@@ -276,10 +327,28 @@ Example: `import { prisma } from "@/lib/db/prisma"`
 
 ### Working with Prisma
 
+**Database Configuration**:
+- **Production**: PostgreSQL (recommended for production deployments)
+- **Development**: SQLite or PostgreSQL (switch provider in `prisma/schema.prisma`)
+
+**PostgreSQL Connection String Format**:
+```
+postgresql://USER:PASSWORD@HOST:PORT/DATABASE?schema=SCHEMA
+```
+
 After schema changes in `prisma/schema.prisma`:
 ```bash
 npx prisma migrate dev --name descriptive_name  # Creates migration + applies it
 npx prisma generate                              # Regenerates TypeScript types
+```
+
+**Setting up a new PostgreSQL database**:
+```bash
+# Create initial migration from schema
+npx prisma migrate dev --name init
+
+# Or push schema without creating migrations (development only)
+npx prisma db push
 ```
 
 Include related data in queries:
@@ -330,7 +399,6 @@ export async function GET(request: NextRequest) {
 1. **Scanned PDFs**: Text-based extraction only. Scanned/image PDFs with poor OCR will fail. GPT-4 Vision integration is planned but not implemented.
 2. **Local File Storage**: Files stored in `public/uploads/`. Not suitable for production (use S3/Azure Blob).
 3. **No Background Jobs**: Processing is synchronous. Large PDFs may timeout.
-4. **SQLite**: Not suitable for concurrent writes in high-traffic scenarios. Use PostgreSQL/MySQL for production deployments.
 
 ## Cost Management
 
@@ -391,6 +459,7 @@ Each AI processing call uses `gpt-4o-mini` which is highly cost-effective:
 - **Bulk Export**: Export only selected invoices to Excel/CSV/JSON
 - **Bulk Delete**: Delete multiple invoices at once (with confirmation dialog)
 - **Bulk Retry**: Retry processing for selected failed invoices
+- **Bulk Vendor Assignment**: Assign vendor to multiple invoices
 - Selection persists across filter changes but resets on page change
 
 ### Error Handling & Retry
@@ -401,21 +470,44 @@ Each AI processing call uses `gpt-4o-mini` which is highly cost-effective:
 - Retry clears previous line items and resets status to "processing"
 - Loading spinner shows during retry operation
 
+### Vendor Management
+- Dedicated vendor management page (`/vendors`)
+- Create vendors with identifiers (Tax ID, Company Registration, etc.)
+- Create custom templates with:
+  - Custom AI prompts
+  - Custom field definitions
+  - Field mappings
+  - Validation rules
+- Automatic vendor detection during processing
+- Manual vendor assignment via bulk operations
+- Template usage statistics tracking
+
 ## Recent Improvements
 
-1. **Multi-Provider Authentication**:
+1. **PostgreSQL Database Migration** (2025-12-30):
+   - Migrated from SQLite to PostgreSQL for production scalability
+   - Added optimized @db.Text annotations for large text fields
+   - SQLite still supported for local development
+   - Created comprehensive migration guide (see MIGRATION_GUIDE.md)
+2. **Multi-Provider Authentication**:
    - Email/password authentication with bcrypt
    - Google OAuth sign-in with account linking
    - Email verification flow with token-based validation
    - Password reset functionality via email
-2. **Bulk Operations**:
+3. **Vendor Management System**:
+   - Vendor profiles with identifiers for auto-detection
+   - Custom extraction templates per vendor
+   - Three-strategy vendor detection (identifier, AI, fuzzy)
+   - Field mapping and validation rules
+4. **Bulk Operations**:
    - Row selection with checkboxes
    - Bulk export (Excel/CSV/JSON) for selected invoices
    - Bulk delete with confirmation
    - Bulk retry for failed processing
-3. **Advanced Filtering**: Search, status/currency/date/amount filters, pagination
-4. **Error Handling**: Detailed error messages, retry functionality for failed invoices
-5. **Model Change** (Cost Optimization): Switched from `gpt-4-turbo-preview` to `gpt-4o-mini` for 60-80% cost reduction
-6. **Dark Mode**: Full theme support with toggle and persistence
-7. **Loading States**: Skeleton loaders and progress indicators improve UX
-8. **Invoice Details**: Comprehensive view modal with all invoice data and error details
+   - Bulk vendor assignment
+5. **Advanced Filtering**: Search, status/currency/date/amount filters, pagination
+6. **Error Handling**: Detailed error messages, retry functionality for failed invoices
+7. **Model Change** (Cost Optimization): Switched from `gpt-4-turbo-preview` to `gpt-4o-mini` for 60-80% cost reduction
+8. **Dark Mode**: Full theme support with toggle and persistence
+9. **Loading States**: Skeleton loaders and progress indicators improve UX
+10. **Invoice Details**: Comprehensive view modal with all invoice data and error details

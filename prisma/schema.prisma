@@ -6,7 +6,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -31,12 +31,12 @@ model Account {
   type              String
   provider          String
   providerAccountId String
-  refresh_token     String?
-  access_token      String?
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
   expires_at        Int?
   token_type        String?
   scope             String?
-  id_token          String?
+  id_token          String? @db.Text
   session_state     String?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -82,15 +82,15 @@ model Invoice {
   totalAmount      Float?
   currency         String?     @default("USD")
   status           String      @default("pending")
-  rawText          String?
-  aiResponse       String?
+  rawText          String?     @db.Text
+  aiResponse       String?     @db.Text
 
   // Vendor relationship
   vendorId         String?
   vendor           Vendor?     @relation(fields: [vendorId], references: [id], onDelete: SetNull)
   detectedVendorId String?
   templateId       String?
-  customData       String?
+  customData       String?     @db.Text
 
   lineItems        LineItem[]
   createdAt        DateTime    @default(now())
@@ -146,12 +146,12 @@ model VendorTemplate {
   description     String?
   isActive        Boolean   @default(true)
 
-  customPrompt    String?
-  customFields    String?
-  fieldMappings   String?
-  validationRules String?
+  customPrompt    String?     @db.Text
+  customFields    String?     @db.Text
+  fieldMappings   String?     @db.Text
+  validationRules String?     @db.Text
 
-  invoiceCount    Int       @default(0)
+  invoiceCount    Int         @default(0)
   lastUsedAt      DateTime?
 
   createdAt       DateTime  @default(now())
