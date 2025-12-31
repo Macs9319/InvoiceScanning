@@ -32,7 +32,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { InvoiceWithLineItems } from "@/types/invoice";
-import { Trash2, Eye, RefreshCw, AlertCircle } from "lucide-react";
+import { Trash2, Eye, RefreshCw, AlertCircle, Download } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { InvoiceDetailDialog } from "@/components/InvoiceDetailDialog";
 
@@ -61,6 +61,7 @@ export default function InvoiceTable({
   const [detailDialogOpen, setDetailDialogOpen] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState<InvoiceWithLineItems | null>(null);
   const [retryingIds, setRetryingIds] = useState<Set<string>>(new Set());
+  const [downloadingIds, setDownloadingIds] = useState<Set<string>>(new Set());
 
   const handleToggleSelection = (id: string) => {
     if (!onSelectionChange) return;
@@ -179,6 +180,7 @@ export default function InvoiceTable({
         cell: (info) => {
           const invoice = info.row.original;
           const isRetrying = retryingIds.has(invoice.id);
+          const isDownloading = downloadingIds.has(invoice.id);
           return (
             <div className="flex gap-1">
               <Button
@@ -189,6 +191,16 @@ export default function InvoiceTable({
                 title="View details"
               >
                 <Eye className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => handleDownloadClick(invoice.id, invoice.fileName)}
+                className="h-8 w-8"
+                title="Download PDF"
+                disabled={isDownloading}
+              >
+                <Download className="h-4 w-4" />
               </Button>
               {invoice.status === "failed" && onRetry && (
                 <Button
@@ -216,7 +228,7 @@ export default function InvoiceTable({
         },
       }),
     ],
-    [retryingIds, onRetry, selectedIds, isAllSelected, isSomeSelected]
+    [retryingIds, downloadingIds, onRetry, selectedIds, isAllSelected, isSomeSelected]
   );
 
   const handleViewClick = (invoice: InvoiceWithLineItems) => {
@@ -242,6 +254,35 @@ export default function InvoiceTable({
   const handleDeleteClick = (id: string) => {
     setInvoiceToDelete(id);
     setDeleteDialogOpen(true);
+  };
+
+  const handleDownloadClick = async (id: string, fileName: string) => {
+    setDownloadingIds(prev => new Set(prev).add(id));
+    try {
+      const response = await fetch(`/api/invoices/download?id=${id}`);
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to generate download URL');
+      }
+
+      // Trigger download
+      const link = document.createElement('a');
+      link.href = data.downloadUrl;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (error) {
+      console.error('Download error:', error);
+      alert(error instanceof Error ? error.message : 'Failed to download file');
+    } finally {
+      setDownloadingIds(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(id);
+        return newSet;
+      });
+    }
   };
 
   const handleDeleteConfirm = () => {

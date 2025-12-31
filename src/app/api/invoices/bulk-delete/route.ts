@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db/prisma";
-import { unlink } from "fs/promises";
-import { join } from "path";
 import { auth } from "@/lib/auth";
+import { getStorageForFile } from "@/lib/storage";
 import { z } from "zod";
 
 const bulkDeleteSchema = z.object({
@@ -39,12 +38,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Delete files
+    // Delete files from storage (S3 or local)
     for (const invoice of invoices) {
       if (invoice.fileUrl) {
         try {
-          const filePath = join(process.cwd(), "public", invoice.fileUrl);
-          await unlink(filePath);
+          const storage = getStorageForFile(invoice.fileUrl);
+          await storage.delete(invoice.fileUrl);
         } catch (error) {
           console.error(`Error deleting file ${invoice.fileUrl}:`, error);
           // Continue even if file deletion fails

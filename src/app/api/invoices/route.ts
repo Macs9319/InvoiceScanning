@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db/prisma";
-import { unlink, readdir } from "fs/promises";
-import { join } from "path";
 import { auth } from "@/lib/auth";
+import { getStorageForFile } from "@/lib/storage";
 
 export async function GET(request: NextRequest) {
   try {
@@ -99,9 +98,9 @@ export async function DELETE(request: NextRequest) {
       try {
         for (const invoice of userInvoices) {
           if (invoice.fileUrl) {
-            const filePath = join(process.cwd(), "public", invoice.fileUrl);
             try {
-              await unlink(filePath);
+              const storage = getStorageForFile(invoice.fileUrl);
+              await storage.delete(invoice.fileUrl);
             } catch (error) {
               console.error(`Error deleting file ${invoice.fileUrl}:`, error);
             }
@@ -144,11 +143,11 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    // Delete the file
+    // Delete the file from storage (S3 or local)
     if (invoice.fileUrl) {
       try {
-        const filePath = join(process.cwd(), "public", invoice.fileUrl);
-        await unlink(filePath);
+        const storage = getStorageForFile(invoice.fileUrl);
+        await storage.delete(invoice.fileUrl);
       } catch (error) {
         console.error("Error deleting file:", error);
       }

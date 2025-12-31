@@ -1,6 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { readFile } from "fs/promises";
-import path from "path";
 import { prisma } from "@/lib/db/prisma";
 import { extractTextFromPDF } from "@/lib/pdf/parser";
 import { extractInvoiceData } from "@/lib/ai/extractor";
@@ -8,6 +6,7 @@ import { auth } from "@/lib/auth";
 import { detectVendorFromText } from "@/lib/ai/vendor-detector";
 import { applyFieldMappings, separateStandardAndCustomFields } from "@/lib/ai/field-mapper";
 import { applyValidationRules } from "@/lib/ai/schema-builder";
+import { getStorageForFile } from "@/lib/storage";
 
 export async function POST(request: NextRequest) {
   try {
@@ -66,12 +65,12 @@ export async function POST(request: NextRequest) {
     });
 
     try {
-      // Read PDF file
-      const filepath = path.join(process.cwd(), "public", invoice.fileUrl);
+      // Read PDF file from storage (S3 or local - auto-detected from URL)
+      const storage = getStorageForFile(invoice.fileUrl);
       let fileBuffer: Buffer;
 
       try {
-        fileBuffer = await readFile(filepath);
+        fileBuffer = await storage.read(invoice.fileUrl);
       } catch (fileError) {
         throw new Error(`Failed to read PDF file: ${fileError instanceof Error ? fileError.message : 'File not found'}`);
       }

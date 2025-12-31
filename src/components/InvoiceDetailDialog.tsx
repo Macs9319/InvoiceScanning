@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -8,10 +9,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { InvoiceWithLineItems } from "@/types/invoice";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Building2, Mail } from "lucide-react";
+import { Building2, Mail, Download } from "lucide-react";
 import Link from "next/link";
 
 interface InvoiceDetailDialogProps {
@@ -25,6 +27,8 @@ export function InvoiceDetailDialog({
   open,
   onOpenChange,
 }: InvoiceDetailDialogProps) {
+  const [isDownloading, setIsDownloading] = useState(false);
+
   if (!invoice) return null;
 
   const getStatusVariant = (status: string) => {
@@ -38,14 +42,53 @@ export function InvoiceDetailDialog({
     }
   };
 
+  const handleDownload = async () => {
+    setIsDownloading(true);
+    try {
+      const response = await fetch(`/api/invoices/download?id=${invoice.id}`);
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to generate download URL');
+      }
+
+      // Trigger download
+      const link = document.createElement('a');
+      link.href = data.downloadUrl;
+      link.download = invoice.fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (error) {
+      console.error('Download error:', error);
+      alert(error instanceof Error ? error.message : 'Failed to download file');
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-3xl max-h-[90vh]">
         <DialogHeader>
-          <DialogTitle>Invoice Details</DialogTitle>
-          <DialogDescription>
-            Complete information for {invoice.fileName}
-          </DialogDescription>
+          <div className="flex items-start justify-between">
+            <div>
+              <DialogTitle>Invoice Details</DialogTitle>
+              <DialogDescription>
+                Complete information for {invoice.fileName}
+              </DialogDescription>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleDownload}
+              disabled={isDownloading}
+              className="ml-4"
+            >
+              <Download className="h-4 w-4 mr-2" />
+              {isDownloading ? 'Downloading...' : 'Download PDF'}
+            </Button>
+          </div>
         </DialogHeader>
 
         <ScrollArea className="max-h-[calc(90vh-120px)] pr-4">
