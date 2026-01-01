@@ -9,6 +9,13 @@ A Next.js web application that uses OpenAI GPT-4 to extract structured data from
   - Google OAuth sign-in
   - Email verification
   - Password reset flow
+- **Background Job Processing**: Asynchronous invoice processing with:
+  - BullMQ job queue with Redis for reliable processing
+  - Real-time status updates via polling (queued → processing → processed)
+  - Automatic retry with exponential backoff
+  - Dedicated worker process for scalability
+  - Graceful fallback to synchronous mode
+  - Support for serverless and self-hosted deployments
 - **Cloud Storage Integration**: Production-ready file storage with:
   - AWS S3 cloud storage with presigned URLs
   - Hybrid local/S3 support for zero-downtime migration
@@ -44,6 +51,7 @@ A Next.js web application that uses OpenAI GPT-4 to extract structured data from
 - **Language**: TypeScript
 - **Authentication**: NextAuth.js v5 with Google OAuth
 - **Database**: PostgreSQL with Prisma ORM (SQLite supported for local development)
+- **Background Jobs**: BullMQ with Redis for asynchronous processing
 - **Cloud Storage**: AWS S3 with presigned URLs (local filesystem fallback)
 - **AI**: OpenAI GPT-4o-mini API
 - **PDF Processing**: pdfreader
@@ -56,6 +64,7 @@ A Next.js web application that uses OpenAI GPT-4 to extract structured data from
 
 - Node.js 18+ installed
 - PostgreSQL 12+ installed and running
+- Redis 6+ installed and running (for background job processing)
 - OpenAI API key ([Get one here](https://platform.openai.com/api-keys))
 - (Optional) AWS Account with S3 access for cloud storage
 - (Optional) Google OAuth credentials for Google sign-in
@@ -112,6 +121,19 @@ SMTP_USER=your_email@gmail.com
 SMTP_PASSWORD=your_app_password
 SMTP_FROM_NAME="Invoice Scanner"
 SMTP_FROM_EMAIL=your_email@gmail.com
+
+# Redis Configuration (Required for background jobs)
+REDIS_URL=redis://localhost:6379
+
+# Background Job Configuration
+WORKER_MODE=separate              # 'separate', 'embedded', or 'disabled'
+QUEUE_NAME=invoice-processing     # Job queue name
+JOB_ATTEMPTS=3                    # Max retry attempts
+JOB_BACKOFF_TYPE=exponential      # Backoff strategy
+JOB_BACKOFF_DELAY=5000           # Initial delay in ms
+JOB_TIMEOUT=120000               # Job timeout (2 minutes)
+WORKER_CONCURRENCY=5              # Concurrent jobs per worker
+NEXT_PUBLIC_POLLING_INTERVAL=10000  # Frontend polling interval (10 seconds)
 ```
 
 **Required Configuration**:
@@ -217,10 +239,50 @@ npx prisma db push
 - Change `provider = "postgresql"` to `provider = "sqlite"` in `prisma/schema.prisma`
 - Run `npx prisma generate && npx prisma db push`
 
-### 4. Run Development Server
+### 4. Setup Redis
 
+Redis is required for background job processing. Choose one of these options:
+
+**Option A: Docker (Recommended for Development)**:
 ```bash
+docker run -d -p 6379:6379 --name invoice-scanner-redis redis:7-alpine
+```
+
+**Option B: Native Installation**:
+```bash
+# macOS
+brew install redis
+redis-server
+
+# Ubuntu/Debian
+sudo apt-get install redis-server
+sudo systemctl start redis
+
+# Verify Redis is running
+redis-cli ping  # Should return "PONG"
+```
+
+**Option C: Cloud Redis (Production)**:
+- **Upstash** (serverless, free tier): https://upstash.com
+- **Redis Cloud** (managed): https://redis.com/cloud
+- Update `REDIS_URL` in `.env.local` with the connection string
+
+### 5. Run Development Server
+
+You can run the Next.js app and worker process together or separately:
+
+**Option A: Run both together (recommended)**:
+```bash
+npm run dev:all
+```
+
+**Option B: Run separately (in two terminals)**:
+```bash
+# Terminal 1: Next.js development server
 npm run dev
+
+# Terminal 2: Worker process
+npm run worker:dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000) in your browser.
@@ -251,13 +313,22 @@ The application supports multiple authentication methods:
 
 2. **Process with AI**:
    - Click "Process with AI" button after uploading
-   - The app will extract text from each PDF and send it to OpenAI GPT-4
-   - Processing may take a few seconds per document
+   - Jobs are queued for background processing (status: **queued**)
+   - Worker process picks up jobs and begins processing (status: **processing**)
+   - Processing typically takes 7-30 seconds per document
+   - Status updates automatically every 10-20 seconds via polling
 
 3. **View Results**:
    - Processed invoices appear in the table below
    - View invoice number, date, descriptions, and total amount
-   - Status badge shows processing status
+   - Enhanced status badges:
+     - **Pending** (gray): Uploaded but not yet queued
+     - **Queued** (blue): Waiting for worker to pick up job
+     - **Processing** (yellow, animated): Currently being processed by AI
+     - **Processed** (green): Successfully completed
+     - **Validation Failed** (orange): Processed but failed validation rules
+     - **Failed** (red): Processing error occurred
+   - Click the eye icon to view full invoice details including errors
 
 ### Exporting Data
 
@@ -288,8 +359,8 @@ Select multiple invoices using checkboxes to perform bulk actions:
 │   ├── app/                    # Next.js App Router
 │   │   ├── api/               # API routes
 │   │   │   ├── upload/        # File upload endpoint
-│   │   │   ├── process/       # AI processing endpoint
-│   │   │   ├── invoices/      # Invoice CRUD & download
+│   │   │   ├── process/       # Job dispatcher & legacy processor
+│   │   │   ├── invoices/      # Invoice CRUD, download & status
 │   │   │   ├── export/        # Export endpoints
 │   │   │   ├── vendors/       # Vendor management
 │   │   │   └── admin/         # Admin utilities (cleanup)
@@ -301,16 +372,23 @@ Select multiple invoices using checkboxes to perform bulk actions:
 │   │   ├── FileUpload.tsx    # Upload component
 │   │   ├── InvoiceTable.tsx  # Table component
 │   │   └── ExportButtons.tsx # Export component
+│   ├── hooks/                # React hooks
+│   │   └── useInvoicePolling.ts  # Status polling hook
 │   ├── lib/                  # Utility libraries
 │   │   ├── ai/              # AI extraction logic
 │   │   ├── pdf/             # PDF parsing
 │   │   ├── storage/         # Cloud storage abstraction
+│   │   ├── queue/           # BullMQ queue management
 │   │   ├── export/          # Export functionality
 │   │   ├── db/              # Prisma client
 │   │   └── utils.ts         # Helper functions
+│   ├── workers/             # Background worker processes
+│   │   ├── invoice-processor.ts  # BullMQ worker
+│   │   └── processor-logic.ts    # Core processing logic
 │   └── types/               # TypeScript types
 ├── prisma/
 │   └── schema.prisma        # Database schema
+├── tsconfig.worker.json     # Worker TypeScript config
 └── public/
     └── uploads/             # Local PDF storage (fallback)
 ```
@@ -325,9 +403,14 @@ Select multiple invoices using checkboxes to perform bulk actions:
 - `date`: Extracted date
 - `totalAmount`: Total amount
 - `currency`: Currency code
-- `status`: Processing status (pending/processing/processed/failed)
+- `status`: Processing status (pending/queued/processing/processed/validation_failed/failed)
 - `rawText`: Extracted PDF text
 - `aiResponse`: Full AI response
+- `jobId`: BullMQ job identifier
+- `processingStartedAt`: When processing began
+- `processingCompletedAt`: When processing finished
+- `retryCount`: Number of retry attempts
+- `lastError`: Last error message
 - `lineItems`: Related line items
 
 **LineItem Model**:
@@ -352,8 +435,9 @@ Select multiple invoices using checkboxes to perform bulk actions:
 
 ### Invoice Management
 - `POST /api/upload` - Upload PDF files (to S3 or local storage)
-- `POST /api/process` - Process invoice with AI
+- `POST /api/process` - Queue invoice for background processing
 - `GET /api/invoices` - Retrieve user's invoices
+- `GET /api/invoices/status?ids={id1,id2,id3}` - Poll job status for processing invoices
 - `GET /api/invoices/download?id={id}` - Generate presigned download URL
 - `DELETE /api/invoices?id={id}` - Delete single invoice
 - `POST /api/invoices/bulk-delete` - Delete multiple invoices
@@ -456,11 +540,41 @@ If using AWS S3 cloud storage:
   - Review orphaned files before deleting: omit `?delete=true` parameter
   - Delete confirmed orphans: `POST /api/admin/cleanup-orphaned-files?delete=true`
 
+### Redis and Background Job Issues
+
+- **Redis connection errors**
+  - Verify Redis is running: `docker ps` or `redis-cli ping`
+  - Start Redis: `docker run -d -p 6379:6379 redis:7-alpine`
+  - Check `REDIS_URL` in `.env.local` is correct
+  - **Development**: Use `redis://localhost:6379`
+  - **Production**: Use Upstash or Redis Cloud connection string
+
+- **Worker not processing jobs**
+  - Ensure worker is running: `npm run worker:dev` or `npm run dev:all`
+  - Check worker logs for errors
+  - Verify `WORKER_MODE=separate` in `.env.local`
+  - Restart both Next.js and worker after environment changes
+
+- **Jobs stuck in "queued" status**
+  - Worker process may not be running - start it with `npm run worker:dev`
+  - Check worker logs for processing errors
+  - Verify Redis connection is working
+  - Check OpenAI API key is configured correctly
+
+- **Environment variable errors in worker**
+  - Worker loads `.env.local` automatically via dotenv
+  - Ensure `.env.local` exists and contains all required variables
+  - Restart worker process after updating `.env.local`
+
+- **Graceful fallback to synchronous mode**
+  - Set `WORKER_MODE=disabled` to use synchronous processing
+  - Useful for debugging or when Redis is unavailable
+  - Processing will be slower but doesn't require worker process
+
 ## Future Enhancements
 
 Planned features for future releases:
 
-- **Background job processing** for large PDFs (prevent timeouts)
 - **GPT-4 Vision support** for scanned/image-based documents
 - **Advanced analytics dashboard** with spending trends and charts
 - **Additional OAuth providers** (Microsoft, Apple Sign-In)
@@ -475,7 +589,18 @@ See [BACKLOG.md](BACKLOG.md) for detailed roadmap and priorities.
 
 ## Recent Updates
 
-### Latest Features (December 2025)
+### Latest Features (January 2026)
+
+**✅ Background Job Processing System** (NEW)
+- Asynchronous invoice processing with BullMQ and Redis
+- Dedicated worker process for scalability (5 concurrent jobs)
+- Real-time status updates via frontend polling
+- Enhanced status badges (queued, processing, validation_failed)
+- Automatic retry with exponential backoff (3 attempts)
+- Job tracking fields (jobId, processingStartedAt, retryCount, lastError)
+- Three operational modes: separate worker, embedded, or synchronous fallback
+- Support for both serverless (Vercel + Upstash) and self-hosted deployments
+- Graceful degradation when Redis is unavailable
 
 **✅ AWS S3 Cloud Storage Integration**
 - Hybrid local/S3 storage support with automatic fallback
