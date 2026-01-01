@@ -32,7 +32,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { InvoiceWithLineItems } from "@/types/invoice";
-import { Trash2, Eye, RefreshCw, AlertCircle, Download } from "lucide-react";
+import { Trash2, Eye, RefreshCw, AlertCircle, Download, Clock, Loader2 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { InvoiceDetailDialog } from "@/components/InvoiceDetailDialog";
 
@@ -156,20 +156,45 @@ export default function InvoiceTable({
         header: "Status",
         cell: (info) => {
           const status = info.getValue();
-          const variant =
-            status === "processed"
-              ? "default"
-              : status === "failed"
-              ? "destructive"
-              : "secondary";
+
+          // Determine badge variant and icon based on status
+          let variant: "default" | "secondary" | "destructive" | "outline" = "secondary";
+          let icon = null;
+          let badgeClassName = "";
+
+          switch (status) {
+            case "processed":
+              variant = "default";
+              break;
+            case "queued":
+              variant = "outline";
+              badgeClassName = "bg-blue-50 text-blue-700 border-blue-200";
+              icon = <Clock className="h-3 w-3 mr-1" />;
+              break;
+            case "processing":
+              variant = "outline";
+              badgeClassName = "bg-yellow-50 text-yellow-700 border-yellow-200";
+              icon = <Loader2 className="h-3 w-3 mr-1 animate-spin" />;
+              break;
+            case "validation_failed":
+              variant = "outline";
+              badgeClassName = "bg-orange-50 text-orange-700 border-orange-200";
+              icon = <AlertCircle className="h-3 w-3 mr-1" />;
+              break;
+            case "failed":
+              variant = "destructive";
+              icon = <AlertCircle className="h-3 w-3 mr-1" />;
+              break;
+            default:
+              variant = "secondary";
+          }
+
           return (
             <div className="flex items-center gap-2">
-              <Badge variant={variant}>{status}</Badge>
-              {status === "failed" && (
-                <span title="Processing failed">
-                  <AlertCircle className="h-4 w-4 text-destructive" />
-                </span>
-              )}
+              <Badge variant={variant} className={badgeClassName}>
+                {icon}
+                {status}
+              </Badge>
             </div>
           );
         },

@@ -11,6 +11,7 @@ import { Header } from "@/components/header";
 import { BulkActionsToolbar } from "@/components/BulkActionsToolbar";
 import { BulkVendorAssignment } from "@/components/BulkVendorAssignment";
 import { ProcessingProgress, type ProcessingFile } from "@/components/ProcessingProgress";
+import { useInvoicePolling } from "@/hooks/useInvoicePolling";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -96,6 +97,30 @@ export default function Home() {
     }
   }, [status]);
 
+  // Get IDs of invoices currently being processed (queued or processing)
+  const processingInvoiceIds = useMemo(
+    () => invoices
+      .filter((inv) => inv.status === 'queued' || inv.status === 'processing')
+      .map((inv) => inv.id),
+    [invoices]
+  );
+
+  // Poll for status updates on processing invoices
+  const { hasProcessingInvoices } = useInvoicePolling(processingInvoiceIds, {
+    enabled: processingInvoiceIds.length > 0,
+    onStatusChange: (changedStatuses) => {
+      // Check if any invoices completed (processed or failed)
+      const hasCompleted = changedStatuses.some(
+        (s) => s.status === 'processed' || s.status === 'failed' || s.status === 'validation_failed'
+      );
+
+      if (hasCompleted) {
+        // Refresh the full invoice list when processing completes
+        fetchInvoices();
+      }
+    },
+  });
+
   const handleFilesUploaded = (files: { id: string; fileName: string }[]) => {
     setUploadedFiles(files);
     setProcessed(false);
@@ -103,7 +128,7 @@ export default function Home() {
   };
 
   const processSingleFile = async (file: { id: string; fileName: string }) => {
-    // Initialize processing status
+    // Initialize queued status
     setProcessingFiles((prev) => [
       ...prev,
       { id: file.id, fileName: file.fileName, status: "processing" },
@@ -120,24 +145,31 @@ export default function Home() {
 
       if (!response.ok) {
         const data = await response.json();
-        throw new Error(data.error || `Failed to process ${file.fileName}`);
+        throw new Error(data.error || `Failed to queue ${file.fileName}`);
       }
 
-      // Update to completed
+      const data = await response.json();
+
+      // Job queued successfully - update to queued status
       setProcessingFiles((prev) =>
         prev.map((pf) =>
-          pf.id === file.id ? { ...pf, status: "completed" } : pf
+          pf.id === file.id
+            ? { ...pf, status: "queued" }
+            : pf
         )
       );
+
+      // The polling hook will detect when processing actually completes
+      // and refresh the invoice list automatically
     } catch (err) {
-      // Update to failed
+      // Update to failed if queueing fails
       setProcessingFiles((prev) =>
         prev.map((pf) =>
           pf.id === file.id
             ? {
                 ...pf,
                 status: "failed",
-                error: err instanceof Error ? err.message : "Processing failed",
+                error: err instanceof Error ? err.message : "Failed to queue for processing",
               }
             : pf
         )
@@ -214,7 +246,8 @@ export default function Home() {
         throw new Error(data.error || "Failed to retry processing");
       }
 
-      // Refresh invoices list
+      // Job queued successfully - refresh to show queued status
+      // The polling hook will detect when processing completes
       await fetchInvoices();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to retry processing");

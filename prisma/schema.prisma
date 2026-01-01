@@ -92,6 +92,13 @@ model Invoice {
   templateId       String?
   customData       String?     @db.Text
 
+  // Background job tracking
+  jobId                 String?     // BullMQ job ID
+  processingStartedAt   DateTime?   // When job started processing
+  processingCompletedAt DateTime?   // When job completed
+  retryCount            Int         @default(0)  // Number of retries
+  lastError             String?     @db.Text     // Last error message (for debugging)
+
   lineItems        LineItem[]
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
@@ -100,6 +107,7 @@ model Invoice {
   @@index([status])
   @@index([date])
   @@index([vendorId])
+  @@index([jobId])
 }
 
 model LineItem {

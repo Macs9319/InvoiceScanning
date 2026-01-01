@@ -24,23 +24,41 @@ This document tracks planned features, enhancements, and technical improvements 
 
 ---
 
-### 2. Cloud Storage Integration
+### 2. Cloud Storage Integration ✅
 **Current Issue**: Local file storage in `public/uploads/` not production-ready
 **Impact**: High - security and scalability concerns
 **Effort**: Medium (2-3 days)
-**Status**: Not Started
+**Status**: ✅ Completed (2025-12-31)
 
-**Suggested Approach**:
-- Migrate to AWS S3 or Azure Blob Storage
-- Implement presigned URLs for secure file access
-- Add file cleanup/lifecycle policies
-- Update file URL handling throughout application
+**Completed Features**:
+- ✅ AWS S3 integration with presigned URLs for secure downloads
+- ✅ Hybrid storage support (both local and S3 files work transparently)
+- ✅ User isolation with S3 key structure: `users/{userId}/invoices/`
+- ✅ Download feature with 1-hour presigned URLs
+- ✅ Orphaned file cleanup admin API
+- ✅ AES256 server-side encryption
+- ✅ Zero-downtime migration (existing local files continue working)
+- ✅ Storage abstraction layer using Strategy Pattern
 
-**Files to Modify**:
-- `src/app/api/upload/route.ts` - Upload to cloud storage
-- `src/lib/pdf/parser.ts` - Read from cloud storage
-- `src/app/api/invoices/route.ts` - Delete from cloud storage
-- Environment variables - Add cloud storage credentials
+**Files Created**:
+- `src/lib/storage/storage-strategy.ts` - Storage interface
+- `src/lib/storage/s3-client.ts` - S3 client singleton
+- `src/lib/storage/local-storage.ts` - Local filesystem wrapper
+- `src/lib/storage/s3-storage.ts` - S3 implementation
+- `src/lib/storage/storage-factory.ts` - Strategy factory
+- `src/lib/storage/index.ts` - Public exports
+- `src/app/api/invoices/download/route.ts` - Download endpoint
+- `src/app/api/admin/cleanup-orphaned-files/route.ts` - Orphaned file cleanup
+
+**Files Modified**:
+- `src/app/api/upload/route.ts` - Upload to S3 with storage abstraction
+- `src/app/api/process/route.ts` - Read from S3/local
+- `src/app/api/invoices/route.ts` - Delete from S3/local
+- `src/app/api/invoices/bulk-delete/route.ts` - Bulk delete from S3/local
+- `src/components/InvoiceTable.tsx` - Added download button
+- `src/components/InvoiceDetailDialog.tsx` - Added download button
+- `.env.example` - AWS S3 configuration documentation
+- `README.md` - AWS S3 setup instructions
 
 ---
 
@@ -388,9 +406,191 @@ OLLAMA_BASE_URL=http://localhost:11434
 
 ---
 
+### 10. Batch Upload Request Management with Audit Trails
+**Current Issue**: No grouping mechanism for batch uploads, no audit trail for operations
+**Impact**: Medium - improves workflow organization, compliance, and debugging
+**Effort**: Large (23-24 days)
+**Status**: Not Started
+
+**Suggested Features**:
+- **Request Management**:
+  - Group multiple invoice uploads into logical "requests" (batches)
+  - Request metadata (title, description, default vendor)
+  - Request lifecycle: Draft → Processing → Completed/Partial/Failed
+  - Statistics tracking (total invoices, processed, failed, pending, total amount)
+- **Editing Capabilities**:
+  - Add/remove files from draft requests
+  - Update request metadata
+  - Assign default vendor to entire batch
+  - Reprocess failed invoices within request
+- **Audit Trail**:
+  - Track request lifecycle events (created, submitted, completed)
+  - Track file-level events (uploaded, processed, failed, deleted)
+  - Track user actions (who did what, when)
+  - Record IP address and user agent for security
+  - Change tracking (previous/new values)
+- **UI Features**:
+  - Request list page with filtering, search, pagination
+  - Request detail page with invoices, statistics, audit timeline
+  - Create request flow with file upload integration
+  - Visual timeline of audit events
+
+**Database Schema Addition**:
+```prisma
+model UploadRequest {
+  id               String        @id @default(cuid())
+  userId           String
+  user             User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  title            String?
+  description      String?       @db.Text
+  status           RequestStatus @default(DRAFT)
+  defaultVendorId  String?
+  defaultVendor    Vendor?       @relation(fields: [defaultVendorId], references: [id], onDelete: SetNull)
+  autoProcess      Boolean       @default(false)
+
+  totalInvoices    Int           @default(0)
+  processedCount   Int           @default(0)
+  failedCount      Int           @default(0)
+  pendingCount     Int           @default(0)
+  totalAmount      Float?
+
+  submittedAt      DateTime?
+  completedAt      DateTime?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  invoices         Invoice[]
+  auditLogs        RequestAuditLog[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+enum RequestStatus {
+  DRAFT
+  PROCESSING
+  COMPLETED
+  PARTIAL
+  FAILED
+}
+
+model RequestAuditLog {
+  id               String          @id @default(cuid())
+  requestId        String
+  request          UploadRequest   @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  userId           String
+  user             User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  eventType        AuditEventType
+  eventCategory    AuditCategory
+  summary          String
+  details          String?         @db.Text
+  targetType       String?
+  targetId         String?
+  previousValue    String?         @db.Text
+  newValue         String?         @db.Text
+  ipAddress        String?
+  userAgent        String?
+  createdAt        DateTime        @default(now())
+
+  @@index([requestId])
+  @@index([userId])
+  @@index([eventType])
+  @@index([createdAt])
+}
+
+// Add to Invoice model:
+requestId        String?
+request          UploadRequest? @relation(fields: [requestId], references: [id], onDelete: SetNull)
+```
+
+**API Endpoints to Create**:
+- `POST /api/requests` - Create new request
+- `GET /api/requests` - List requests (filtering, pagination, search)
+- `GET /api/requests/[requestId]` - Get request details with invoices
+- `PATCH /api/requests/[requestId]` - Update request metadata
+- `DELETE /api/requests/[requestId]` - Delete request (unlink invoices)
+- `POST /api/requests/[requestId]/submit` - Submit for processing
+- `POST /api/requests/[requestId]/retry` - Retry failed invoices
+- `POST /api/requests/[requestId]/files` - Add files to request
+- `DELETE /api/requests/[requestId]/files` - Remove files from request
+- `GET /api/requests/[requestId]/audit` - Get audit logs
+- `GET /api/requests/[requestId]/timeline` - Get timeline view
+- `GET /api/requests/[requestId]/stats` - Get statistics
+
+**Files to Create**:
+- `prisma/schema.prisma` - Add UploadRequest, RequestAuditLog models
+- `src/app/api/requests/route.ts` - Request CRUD
+- `src/app/api/requests/[requestId]/route.ts` - Request detail/update/delete
+- `src/app/api/requests/[requestId]/submit/route.ts` - Submit workflow
+- `src/app/api/requests/[requestId]/retry/route.ts` - Retry failed
+- `src/app/api/requests/[requestId]/files/route.ts` - File management
+- `src/app/api/requests/[requestId]/audit/route.ts` - Audit logs
+- `src/app/api/requests/[requestId]/stats/route.ts` - Statistics
+- `src/lib/audit/logger.ts` - Audit logging utilities
+- `src/lib/audit/middleware.ts` - Request metadata extraction
+- `src/lib/requests/statistics.ts` - Statistics computation
+- `src/lib/requests/status-calculator.ts` - Status determination
+- `src/types/request.ts` - TypeScript types and Zod schemas
+- `src/app/requests/page.tsx` - Request list page
+- `src/app/requests/[requestId]/page.tsx` - Request detail page
+- `src/app/requests/new/page.tsx` - Create request page
+- `src/components/requests/RequestTable.tsx` - Request list table
+- `src/components/requests/RequestDetailCard.tsx` - Request metadata
+- `src/components/requests/RequestStatistics.tsx` - Statistics display
+- `src/components/requests/RequestFilters.tsx` - Filter UI
+- `src/components/requests/AuditTrail.tsx` - Audit log visualization
+- `src/components/requests/RequestTimeline.tsx` - Timeline component
+- `src/components/requests/CreateRequestDialog.tsx` - Create dialog
+- `src/components/requests/AddFilesDialog.tsx` - Add files dialog
+- `src/components/requests/RequestStatusBadge.tsx` - Status badge
+
+**Files to Modify**:
+- `src/app/api/upload/route.ts` - Add requestId support for linking uploads
+- `src/app/api/process/route.ts` - Add audit logging, update request status
+- `src/components/FileUpload.tsx` - Add requestId prop support
+- `src/components/InvoiceTable.tsx` - Add "Request" column
+- `src/app/page.tsx` - Add requests section to dashboard
+- `src/components/header.tsx` - Add navigation link to requests
+
+**Implementation Phases**:
+1. **Phase 1 (Days 1-2)**: Database schema and migrations
+2. **Phase 2 (Days 3-4)**: Core API - Request CRUD operations
+3. **Phase 3 (Days 5-6)**: Audit logging system
+4. **Phase 4 (Days 7-8)**: File and invoice management
+5. **Phase 5 (Days 9-10)**: Workflow endpoints (submit, retry, cancel)
+6. **Phase 6 (Days 11-12)**: Frontend - Request list and filters
+7. **Phase 7 (Days 13-15)**: Frontend - Request detail page
+8. **Phase 8 (Days 16-17)**: Frontend - Create request flow
+9. **Phase 9 (Days 18-19)**: Frontend - Audit trail and timeline
+10. **Phase 10 (Days 20-21)**: Integration with existing UI
+11. **Phase 11 (Days 22-23)**: Testing and polish
+12. **Phase 12 (Day 24)**: Deployment and documentation
+
+**Key Design Decisions**:
+- **Backward Compatibility**: Existing invoices with `requestId=null` are valid "orphaned" invoices
+- **Soft Delete**: Deleting request unlinks invoices (sets `requestId=null`), doesn't cascade delete
+- **Real-time Statistics**: Computed on-demand from invoices for accuracy
+- **Authorization**: Users can only access requests they created
+- **Auto-Process Option**: When enabled, files are processed immediately on upload
+
+**Benefits**:
+- Organize batch uploads into logical groups
+- Track complete history of all operations for compliance
+- Improve debugging with detailed audit trail
+- Better workflow management for processing large batches
+- Enhanced visibility into batch processing status
+- Compliance and security (who did what, when)
+
+**Plan File**: `/Users/ronnie/.claude/plans/enchanted-shimmying-dawn.md`
+
+---
+
 ## 🟢 Low Priority - Nice to Have
 
-### 10. Advanced Analytics Dashboard
+### 11. Advanced Analytics Dashboard
 **Impact**: Low-Medium - visualization and insights
 **Effort**: Large (7-10 days)
 **Status**: Not Started
@@ -411,7 +611,7 @@ OLLAMA_BASE_URL=http://localhost:11434
 
 ---
 
-### 11. Webhook Notifications
+### 12. Webhook Notifications
 **Impact**: Low - integration capabilities
 **Effort**: Medium (2-3 days)
 **Status**: Not Started
@@ -431,7 +631,7 @@ OLLAMA_BASE_URL=http://localhost:11434
 
 ---
 
-### 12. API Documentation (Swagger/OpenAPI)
+### 13. API Documentation (Swagger/OpenAPI)
 **Impact**: Low - developer experience
 **Effort**: Small-Medium (1-2 days)
 **Status**: Not Started
@@ -450,7 +650,7 @@ OLLAMA_BASE_URL=http://localhost:11434
 
 ---
 
-### 13. Mobile App Support
+### 14. Mobile App Support
 **Impact**: Low - mobile user base
 **Effort**: Very Large (14+ days)
 **Status**: Not Started
@@ -473,7 +673,7 @@ OLLAMA_BASE_URL=http://localhost:11434
 
 ### Phase 1 - Production Ready (1-2 weeks)
 1. Background job processing
-2. Cloud storage integration
+2. ~~Cloud storage integration~~ ✅ **COMPLETED**
 3. ~~Database migration to PostgreSQL~~ ✅ **COMPLETED**
 
 ### Phase 2 - Enhanced Features (4-5 weeks)
@@ -483,14 +683,15 @@ OLLAMA_BASE_URL=http://localhost:11434
 7. User Profile Page
 8. Settings Page
 9. Custom AI Model Provider Selection
+10. Batch Upload Request Management with Audit Trails
 
 ### Phase 3 - Advanced Features (3-4 weeks)
-10. Advanced analytics dashboard
-11. Webhook notifications
-12. API documentation
+11. Advanced analytics dashboard
+12. Webhook notifications
+13. API documentation
 
 ### Phase 4 - Future (timeline flexible)
-13. Mobile app support
+14. Mobile app support
 
 ---
 
@@ -499,7 +700,7 @@ OLLAMA_BASE_URL=http://localhost:11434
 From CLAUDE.md and codebase analysis:
 
 1. **Scanned PDFs**: Text-based extraction only - GPT-4 Vision integration planned but not implemented
-2. **Local File Storage**: Files stored in `public/uploads/` - not suitable for production (see #2 above)
+2. ~~**Local File Storage**: Files stored in `public/uploads/` - not suitable for production~~ ✅ **RESOLVED** - Migrated to AWS S3 with hybrid support (2025-12-31)
 3. **No Background Jobs**: Processing is synchronous - large PDFs may timeout (see #1 above)
 4. **Hardcoded AI Model**: Only supports OpenAI GPT-4o-mini - no provider or model flexibility (see #9 above)
 5. ~~**SQLite**: Not suitable for concurrent writes in high-traffic scenarios~~ ✅ **RESOLVED** - Migrated to PostgreSQL (2025-12-30)
@@ -516,4 +717,4 @@ From CLAUDE.md and codebase analysis:
 
 ---
 
-Last Updated: 2025-12-30 (Added Profile Page, Settings Page, and Custom AI Model Provider backlog items)
+Last Updated: 2025-12-31 (Added Batch Upload Request Management with Audit Trails; updated item #2 Cloud Storage Integration to ✅ Completed)

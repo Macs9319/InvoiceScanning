@@ -2,9 +2,22 @@ import { prisma } from '@/lib/db/prisma';
 import { VendorDetectionResult } from '@/types/vendor';
 import OpenAI from 'openai';
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+// Lazy-load OpenAI client to ensure environment variables are loaded first
+let openaiClient: OpenAI | null = null;
+
+function getOpenAIClient(): OpenAI {
+  if (!openaiClient) {
+    if (!process.env.OPENAI_API_KEY) {
+      throw new Error(
+        'OPENAI_API_KEY environment variable is not set. Please configure it in .env.local'
+      );
+    }
+    openaiClient = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+    });
+  }
+  return openaiClient;
+}
 
 /**
  * Detect vendor from PDF text using multiple strategies
@@ -131,7 +144,7 @@ Return JSON with:
 Invoice text (first 1500 characters):
 ${pdfText.substring(0, 1500)}`;
 
-  const response = await openai.chat.completions.create({
+  const response = await getOpenAIClient().chat.completions.create({
     model: 'gpt-4o-mini',
     messages: [
       {

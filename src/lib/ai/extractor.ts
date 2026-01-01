@@ -3,9 +3,22 @@ import { ExtractedInvoiceData, ExtractedInvoiceSchema } from "@/types/invoice";
 import { VendorTemplate } from "@prisma/client";
 import { buildDynamicSchema, getCustomFieldDefinitions } from "./schema-builder";
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+// Lazy-load OpenAI client to ensure environment variables are loaded first
+let openaiClient: OpenAI | null = null;
+
+function getOpenAIClient(): OpenAI {
+  if (!openaiClient) {
+    if (!process.env.OPENAI_API_KEY) {
+      throw new Error(
+        'OPENAI_API_KEY environment variable is not set. Please configure it in .env.local'
+      );
+    }
+    openaiClient = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+    });
+  }
+  return openaiClient;
+}
 
 const EXTRACTION_PROMPT = `You are an expert invoice/receipt data extraction system. Extract the following information from the provided document:
 
@@ -89,7 +102,7 @@ export async function extractInvoiceData(
     // Build prompt with template customizations
     const prompt = buildExtractionPrompt(template);
 
-    const completion = await openai.chat.completions.create({
+    const completion = await getOpenAIClient().chat.completions.create({
       model: "gpt-4o-mini", // Cost-effective model: ~60-80% cheaper than GPT-4 Turbo
       messages: [
         {

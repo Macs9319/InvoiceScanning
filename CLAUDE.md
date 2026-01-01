@@ -24,6 +24,9 @@ npm start
 # Run linter
 npm run lint
 
+# Note: No test suite currently configured
+# To add tests, install jest/vitest and add test scripts to package.json
+
 # Database operations
 npx prisma generate          # Regenerate Prisma client after schema changes
 npx prisma migrate dev       # Create and apply migrations (requires CREATEDB permission)
@@ -59,9 +62,30 @@ The application uses NextAuth.js v5 (beta) with multiple authentication provider
 
 The application follows a three-stage pipeline for invoice processing:
 
-1. **Upload Stage** (`/api/upload`): Validates auth → saves PDF files to `public/uploads/` → creates database record with `status: "pending"` and `userId`
-2. **AI Processing Stage** (`/api/process`): Validates auth + ownership → extracts text from PDF → sends to OpenAI GPT-4o-mini → parses structured response → saves to database with line items
+1. **Upload Stage** (`/api/upload`): Validates auth → saves PDF files to storage (S3 or local) via storage factory → creates database record with `status: "pending"` and `userId`
+2. **AI Processing Stage** (`/api/process`): Validates auth + ownership → retrieves PDF from storage → extracts text from PDF → sends to OpenAI GPT-4o-mini → parses structured response → saves to database with line items
 3. **Export Stage** (`/api/export`): Validates auth → queries user's invoices with line items → generates Excel/CSV/JSON files
+
+### Cloud Storage Architecture (Strategy Pattern)
+
+The application implements a **Storage Strategy Pattern** for flexible file storage:
+
+**Storage Abstraction Layer**:
+- `StorageStrategy` interface defines contract: `upload()`, `download()`, `delete()`, `getUrl()`
+- `LocalStorage` implementation for filesystem storage in `public/uploads/`
+- `S3Storage` implementation for AWS S3 cloud storage with presigned URLs
+- `StorageFactory` selects provider based on `STORAGE_PROVIDER` env var and file URL prefix
+
+**Hybrid Support**:
+- System transparently handles both local files (`/uploads/...`) and S3 files (`s3://...`)
+- Existing local files continue working after S3 migration
+- User isolation in S3: `users/{userId}/invoices/{filename}`
+- Presigned URLs (1-hour expiry) for secure S3 downloads via `/api/invoices/download`
+
+**File URL Convention**:
+- Local files: `/uploads/filename.pdf` (relative path from `public/`)
+- S3 files: `s3://bucket/users/{userId}/invoices/filename.pdf` (full S3 URI stored in DB)
+- Storage factory detects provider from URL prefix
 
 ### Data Flow
 
@@ -146,6 +170,13 @@ src/
 │   │   ├── schema-builder.ts    # Dynamic schema generation for custom fields
 │   │   └── field-mapper.ts      # Field mapping and validation
 │   ├── pdf/parser.ts            # PDF text extraction (pdfreader)
+│   ├── storage/                 # Storage abstraction layer (Strategy Pattern)
+│   │   ├── storage-strategy.ts  # StorageStrategy interface definition
+│   │   ├── local-storage.ts     # Local filesystem implementation
+│   │   ├── s3-storage.ts        # AWS S3 implementation with presigned URLs
+│   │   ├── s3-client.ts         # S3 client singleton
+│   │   ├── storage-factory.ts   # Factory to select storage provider
+│   │   └── index.ts             # Public exports
 │   ├── export/                  # Excel, CSV, JSON generators
 │   ├── email/                   # Email sending (nodemailer) and templates
 │   └── db/prisma.ts             # Prisma client singleton
@@ -240,6 +271,14 @@ SMTP_USER=your_email@gmail.com
 SMTP_PASSWORD=your_app_password
 SMTP_FROM_NAME="Invoice Scanner"
 SMTP_FROM_EMAIL=your_email@gmail.com
+
+# AWS S3 Cloud Storage (Optional - for production file storage)
+AWS_REGION=us-east-1
+AWS_ACCESS_KEY_ID=your_access_key_id_here
+AWS_SECRET_ACCESS_KEY=your_secret_access_key_here
+AWS_S3_BUCKET_NAME=invoice-scanner-files
+S3_PRESIGNED_URL_EXPIRY=3600                     # Presigned URL expiration in seconds (default: 1 hour)
+STORAGE_PROVIDER=s3                              # Use 's3' for cloud storage, 'local' for filesystem
 ```
 
 **Important**: After adding/changing `.env.local`, restart the dev server.
@@ -268,6 +307,17 @@ For email verification and password reset functionality:
 - **Other providers**: Use your SMTP server credentials
 - **Development**: If SMTP is not configured, emails will be logged to console instead of sent
 - Email features gracefully degrade when SMTP is not configured
+
+### AWS S3 Cloud Storage Setup (Optional)
+For production file storage instead of local filesystem:
+1. Go to [AWS Console → S3](https://console.aws.amazon.com/s3) and create bucket
+2. Bucket settings: Block all public access ✅, Server-side encryption (AES256) ✅
+3. Go to [AWS Console → IAM](https://console.aws.amazon.com/iam) and create user with programmatic access
+4. Attach custom policy with `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject`, `s3:HeadObject`, `s3:ListBucket` permissions
+5. Add AWS credentials to `.env.local` (see above)
+6. Set `STORAGE_PROVIDER=s3` to enable S3 storage
+7. **Migration**: Existing local files continue working; new uploads go to S3
+8. See `.env.example` for detailed AWS configuration and IAM policy example
 
 ## AI Extraction Logic
 
@@ -309,6 +359,39 @@ The project uses TypeScript path aliases:
 Example: `import { prisma } from "@/lib/db/prisma"`
 
 ## Common Development Patterns
+
+### Working with File Storage
+
+**To upload a file**:
+```typescript
+import { StorageFactory } from "@/lib/storage";
+
+const storage = StorageFactory.getStorage();
+const fileUrl = await storage.upload(file, userId);
+// fileUrl will be "/uploads/..." for local or "s3://bucket/..." for S3
+```
+
+**To download a file**:
+```typescript
+import { StorageFactory } from "@/lib/storage";
+
+const storage = StorageFactory.getStorage(invoice.fileUrl);
+const buffer = await storage.download(invoice.fileUrl);
+// For S3 files, use getUrl() to get presigned URL instead:
+const url = await storage.getUrl(invoice.fileUrl);
+```
+
+**To delete a file**:
+```typescript
+import { StorageFactory } from "@/lib/storage";
+
+const storage = StorageFactory.getStorage(invoice.fileUrl);
+await storage.delete(invoice.fileUrl);
+```
+
+**Storage factory automatically selects the correct provider** based on:
+1. File URL prefix (local: `/uploads/...`, S3: `s3://...`)
+2. `STORAGE_PROVIDER` environment variable for new uploads
 
 ### Adding a New Export Format
 1. Create `src/lib/export/newformat.ts` with a function that takes invoices and returns a file buffer
@@ -374,10 +457,17 @@ await prisma.invoice.findMany({
 
 ## File Upload Handling
 
-- Files are saved to `public/uploads/` directory
-- `fileUrl` in database stores relative path: `/uploads/filename.pdf`
+**Storage Strategy Pattern**:
+- Files saved via `StorageFactory.getStorage()` which selects provider (local or S3)
+- Local files: Saved to `public/uploads/`, `fileUrl` stores relative path: `/uploads/filename.pdf`
+- S3 files: Saved to `users/{userId}/invoices/{filename}`, `fileUrl` stores S3 URI: `s3://bucket/users/{userId}/invoices/filename.pdf`
 - Max file size: 10MB (validated in client and can be enforced server-side)
 - File validation: Must be `application/pdf` MIME type
+
+**Downloading Files**:
+- Local files: Direct access via public URL
+- S3 files: Use `/api/invoices/download?id={invoiceId}` to get presigned URL (1-hour expiry)
+- Storage factory automatically determines correct download method based on file URL prefix
 
 ## API Security and Data Isolation
 
@@ -411,8 +501,8 @@ export async function GET(request: NextRequest) {
 ## Known Limitations
 
 1. **Scanned PDFs**: Text-based extraction only. Scanned/image PDFs with poor OCR will fail. GPT-4 Vision integration is planned but not implemented.
-2. **Local File Storage**: Files stored in `public/uploads/`. Not suitable for production (use S3/Azure Blob).
-3. **No Background Jobs**: Processing is synchronous. Large PDFs may timeout.
+2. **No Background Jobs**: Processing is synchronous. Large PDFs may timeout. Consider implementing job queue (Bull/BullMQ with Redis) for production.
+3. **No Automated Tests**: Test suite not yet implemented. Consider adding Jest or Vitest for unit/integration tests.
 
 ## Cost Management
 
@@ -498,30 +588,38 @@ Each AI processing call uses `gpt-4o-mini` which is highly cost-effective:
 
 ## Recent Improvements
 
-1. **PostgreSQL Database Migration** (2025-12-30):
+1. **AWS S3 Cloud Storage Integration** (2025-12-31):
+   - Implemented Storage Strategy Pattern for flexible file storage
+   - AWS S3 cloud storage with presigned URLs for secure downloads
+   - Hybrid local/S3 support for zero-downtime migration
+   - User-isolated storage structure (`users/{userId}/invoices/`)
+   - Server-side AES256 encryption
+   - Orphaned file cleanup API (`/api/admin/cleanup-orphaned-files`)
+   - Storage abstraction: `StorageStrategy` interface with `LocalStorage` and `S3Storage` implementations
+2. **PostgreSQL Database Migration** (2025-12-30):
    - Migrated from SQLite to PostgreSQL for production scalability
    - Added optimized @db.Text annotations for large text fields
    - SQLite still supported for local development
    - Created comprehensive migration guide (see MIGRATION_GUIDE.md)
-2. **Multi-Provider Authentication**:
+3. **Multi-Provider Authentication**:
    - Email/password authentication with bcrypt
    - Google OAuth sign-in with account linking
    - Email verification flow with token-based validation
    - Password reset functionality via email
-3. **Vendor Management System**:
+4. **Vendor Management System**:
    - Vendor profiles with identifiers for auto-detection
    - Custom extraction templates per vendor
    - Three-strategy vendor detection (identifier, AI, fuzzy)
    - Field mapping and validation rules
-4. **Bulk Operations**:
+5. **Bulk Operations**:
    - Row selection with checkboxes
    - Bulk export (Excel/CSV/JSON) for selected invoices
    - Bulk delete with confirmation
    - Bulk retry for failed processing
    - Bulk vendor assignment
-5. **Advanced Filtering**: Search, status/currency/date/amount filters, pagination
-6. **Error Handling**: Detailed error messages, retry functionality for failed invoices
-7. **Model Change** (Cost Optimization): Switched from `gpt-4-turbo-preview` to `gpt-4o-mini` for 60-80% cost reduction
-8. **Dark Mode**: Full theme support with toggle and persistence
-9. **Loading States**: Skeleton loaders and progress indicators improve UX
-10. **Invoice Details**: Comprehensive view modal with all invoice data and error details
+6. **Advanced Filtering**: Search, status/currency/date/amount filters, pagination
+7. **Error Handling**: Detailed error messages, retry functionality for failed invoices
+8. **Model Change** (Cost Optimization): Switched from `gpt-4-turbo-preview` to `gpt-4o-mini` for 60-80% cost reduction
+9. **Dark Mode**: Full theme support with toggle and persistence
+10. **Loading States**: Skeleton loaders and progress indicators improve UX
+11. **Invoice Details**: Comprehensive view modal with all invoice data and error details

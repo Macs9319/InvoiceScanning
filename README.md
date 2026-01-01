@@ -9,8 +9,15 @@ A Next.js web application that uses OpenAI GPT-4 to extract structured data from
   - Google OAuth sign-in
   - Email verification
   - Password reset flow
+- **Cloud Storage Integration**: Production-ready file storage with:
+  - AWS S3 cloud storage with presigned URLs
+  - Hybrid local/S3 support for zero-downtime migration
+  - User-isolated storage structure (`users/{userId}/invoices/`)
+  - Server-side AES256 encryption
+  - PDF download feature with time-limited secure URLs
+  - Orphaned file cleanup automation
 - **Batch PDF Upload**: Drag-and-drop interface for uploading multiple PDF files
-- **AI-Powered Extraction**: Uses OpenAI GPT-4 to extract:
+- **AI-Powered Extraction**: Uses OpenAI GPT-4o-mini to extract:
   - Invoice/Receipt number
   - Date
   - Line item descriptions
@@ -37,8 +44,9 @@ A Next.js web application that uses OpenAI GPT-4 to extract structured data from
 - **Language**: TypeScript
 - **Authentication**: NextAuth.js v5 with Google OAuth
 - **Database**: PostgreSQL with Prisma ORM (SQLite supported for local development)
-- **AI**: OpenAI GPT-4 API
-- **PDF Processing**: pdf-parse
+- **Cloud Storage**: AWS S3 with presigned URLs (local filesystem fallback)
+- **AI**: OpenAI GPT-4o-mini API
+- **PDF Processing**: pdfreader
 - **Email**: Nodemailer (SMTP)
 - **UI Components**: shadcn/ui, Tailwind CSS, Radix UI
 - **Table**: TanStack React Table
@@ -49,6 +57,7 @@ A Next.js web application that uses OpenAI GPT-4 to extract structured data from
 - Node.js 18+ installed
 - PostgreSQL 12+ installed and running
 - OpenAI API key ([Get one here](https://platform.openai.com/api-keys))
+- (Optional) AWS Account with S3 access for cloud storage
 - (Optional) Google OAuth credentials for Google sign-in
 - (Optional) SMTP server credentials for email features
 
@@ -61,6 +70,12 @@ npm install
 ```
 
 ### 2. Configure Environment Variables
+
+Copy `.env.example` to `.env.local` and configure your settings:
+
+```bash
+cp .env.example .env.local
+```
 
 Edit the `.env.local` file with your configuration:
 
@@ -77,6 +92,13 @@ NODE_ENV=development
 # NextAuth (Required)
 AUTH_SECRET=your_generated_secret_here  # Generate with: openssl rand -base64 32
 NEXTAUTH_URL=http://localhost:3000
+
+# AWS S3 Cloud Storage (Optional - for production)
+AWS_REGION=us-east-1
+AWS_ACCESS_KEY_ID=your_access_key_id_here
+AWS_SECRET_ACCESS_KEY=your_secret_access_key_here
+AWS_S3_BUCKET_NAME=invoice-scanner-files
+STORAGE_PROVIDER=s3  # Use 's3' for cloud storage, 'local' for filesystem
 
 # Google OAuth (Optional - for Google sign-in)
 GOOGLE_CLIENT_ID=your_google_client_id_here
@@ -112,6 +134,64 @@ SMTP_FROM_EMAIL=your_email@gmail.com
 - For Gmail: Use an [App Password](https://support.google.com/accounts/answer/185833)
 - For other providers: Use your SMTP server credentials
 - Leave empty for development (emails will be logged to console)
+
+**Optional: AWS S3 Cloud Storage Setup** (for production file storage):
+
+By default, files are stored locally in `public/uploads/`. For production deployments, use AWS S3:
+
+1. **Create S3 Bucket**:
+   - Go to [AWS Console → S3](https://console.aws.amazon.com/s3)
+   - Click "Create bucket"
+   - Bucket name: `invoice-scanner-files` (or your choice)
+   - Region: `us-east-1` (or your preferred region)
+   - **Block all public access**: ✅ ENABLED
+   - **Versioning**: Optional
+   - **Server-side encryption**: AES256 ✅ ENABLED
+
+2. **Create IAM User**:
+   - Go to [AWS Console → IAM → Users](https://console.aws.amazon.com/iam/home#/users)
+   - Click "Create user"
+   - User name: `invoice-scanner-s3-user`
+   - Access type: Programmatic access
+   - Create and attach custom policy:
+   ```json
+   {
+     "Version": "2012-10-17",
+     "Statement": [{
+       "Effect": "Allow",
+       "Action": [
+         "s3:PutObject",
+         "s3:GetObject",
+         "s3:DeleteObject",
+         "s3:HeadObject",
+         "s3:ListBucket"
+       ],
+       "Resource": [
+         "arn:aws:s3:::invoice-scanner-files",
+         "arn:aws:s3:::invoice-scanner-files/*"
+       ]
+     }]
+   }
+   ```
+   - Save **Access Key ID** and **Secret Access Key** (you won't see them again!)
+
+3. **Configure Environment Variables**:
+   - Add AWS credentials to `.env.local` (see above)
+   - Set `STORAGE_PROVIDER=s3` to enable S3 storage
+
+4. **Optional: Configure S3 Lifecycle Rules** (for automatic file management):
+   - Go to S3 bucket → Management → Lifecycle rules
+   - **Rule 1**: Archive to Glacier after 90 days
+   - **Rule 2**: Delete files after 365 days
+   - **Rule 3**: Cleanup incomplete uploads after 7 days
+
+**Storage Behavior**:
+- **Without AWS configuration**: Files stored in `public/uploads/` (local filesystem)
+- **With AWS configuration**: New uploads go to S3, existing local files continue working
+- **Hybrid support**: System supports both local and S3 files transparently
+- **Cost**: ~$0.02/month for 100 invoices, scales to ~$20/month for 10,000 invoices
+
+See `.env.example` for detailed AWS configuration documentation.
 
 ### 3. Setup Database
 
@@ -209,18 +289,22 @@ Select multiple invoices using checkboxes to perform bulk actions:
 │   │   ├── api/               # API routes
 │   │   │   ├── upload/        # File upload endpoint
 │   │   │   ├── process/       # AI processing endpoint
-│   │   │   ├── invoices/      # Invoice CRUD
-│   │   │   └── export/        # Export endpoint
+│   │   │   ├── invoices/      # Invoice CRUD & download
+│   │   │   ├── export/        # Export endpoints
+│   │   │   ├── vendors/       # Vendor management
+│   │   │   └── admin/         # Admin utilities (cleanup)
 │   │   ├── layout.tsx         # Root layout
 │   │   └── page.tsx           # Main page
 │   ├── components/            # React components
 │   │   ├── ui/               # shadcn/ui components
+│   │   ├── vendors/          # Vendor management UI
 │   │   ├── FileUpload.tsx    # Upload component
 │   │   ├── InvoiceTable.tsx  # Table component
 │   │   └── ExportButtons.tsx # Export component
 │   ├── lib/                  # Utility libraries
 │   │   ├── ai/              # AI extraction logic
 │   │   ├── pdf/             # PDF parsing
+│   │   ├── storage/         # Cloud storage abstraction
 │   │   ├── export/          # Export functionality
 │   │   ├── db/              # Prisma client
 │   │   └── utils.ts         # Helper functions
@@ -228,7 +312,7 @@ Select multiple invoices using checkboxes to perform bulk actions:
 ├── prisma/
 │   └── schema.prisma        # Database schema
 └── public/
-    └── uploads/             # Uploaded PDF storage
+    └── uploads/             # Local PDF storage (fallback)
 ```
 
 ## Database Schema
@@ -267,17 +351,33 @@ Select multiple invoices using checkboxes to perform bulk actions:
 - `GET /api/verify-email` - Verify email with token
 
 ### Invoice Management
-- `POST /api/upload` - Upload PDF files
+- `POST /api/upload` - Upload PDF files (to S3 or local storage)
 - `POST /api/process` - Process invoice with AI
 - `GET /api/invoices` - Retrieve user's invoices
+- `GET /api/invoices/download?id={id}` - Generate presigned download URL
 - `DELETE /api/invoices?id={id}` - Delete single invoice
 - `POST /api/invoices/bulk-delete` - Delete multiple invoices
+- `POST /api/invoices/bulk-assign-vendor` - Assign vendor to multiple invoices
+
+### Vendor Management
+- `GET /api/vendors` - List user's vendors
+- `POST /api/vendors` - Create new vendor
+- `PATCH /api/vendors/{id}` - Update vendor
+- `DELETE /api/vendors/{id}` - Delete vendor
+- `GET /api/vendors/{id}/templates` - List vendor templates
+- `POST /api/vendors/{id}/templates` - Create vendor template
 
 ### Export
 - `GET /api/export?format={excel|csv|json}` - Export all invoices
 - `POST /api/export/bulk` - Export selected invoices
 
+### Admin
+- `POST /api/admin/cleanup-orphaned-files` - Detect orphaned S3 files
+- `POST /api/admin/cleanup-orphaned-files?delete=true` - Delete orphaned files
+
 ## Cost Considerations
+
+### OpenAI API Costs
 
 This application uses OpenAI's **GPT-4o-mini** API which is highly cost-effective:
 - Each PDF processing makes an API call to GPT-4o-mini
@@ -289,6 +389,22 @@ This application uses OpenAI's **GPT-4o-mini** API which is highly cost-effectiv
 - Results are cached in the database - don't reprocess the same file
 - GPT-4o-mini is already configured for optimal cost/performance balance
 - Monitor your OpenAI usage at [platform.openai.com](https://platform.openai.com)
+
+### AWS S3 Storage Costs (Optional)
+
+If using AWS S3 cloud storage:
+- **Standard Storage**: $0.023 per GB/month
+- **Glacier Instant Retrieval** (after 90 days): $0.004 per GB/month
+- **API Requests**: $0.0004 per 1,000 GET requests, $0.005 per 1,000 PUT requests
+
+**Cost Estimate**:
+- **100 invoices/month** @ 500 KB each: ~**$0.02/month** (2 cents)
+- **10,000 invoices/month**: ~$20/month
+- With Glacier archival after 90 days: 75% cheaper for older files
+
+**Local Storage Alternative**:
+- Set `STORAGE_PROVIDER=local` to use free local filesystem storage
+- Suitable for development and small-scale deployments
 
 ## Troubleshooting
 
@@ -321,18 +437,64 @@ This application uses OpenAI's **GPT-4o-mini** API which is highly cost-effectiv
   - Run `npx prisma db push` to sync schema (or `npx prisma migrate dev` with CREATEDB permission)
   - For shadow database errors, use `npx prisma db push` instead of migrations
 
+### AWS S3 Storage Issues
+
+- **Upload fails with S3 errors**
+  - Verify AWS credentials in `.env.local` are correct
+  - Check IAM user has required permissions (see setup instructions)
+  - Verify S3 bucket name and region match `.env.local`
+  - Ensure bucket exists and is accessible
+  - **Fallback**: Set `STORAGE_PROVIDER=local` to use local filesystem
+
+- **Cannot download PDFs**
+  - Check browser console for presigned URL errors
+  - Presigned URLs expire after 1 hour - regenerate if expired
+  - Verify file exists in S3 bucket or local storage
+
+- **Orphaned files in S3**
+  - Run cleanup API: `POST /api/admin/cleanup-orphaned-files`
+  - Review orphaned files before deleting: omit `?delete=true` parameter
+  - Delete confirmed orphans: `POST /api/admin/cleanup-orphaned-files?delete=true`
+
 ## Future Enhancements
 
-- Background job processing for large PDFs
-- Cloud storage integration (S3, Azure Blob) for production deployments
-- GPT-4 Vision support for scanned documents
-- Advanced analytics dashboard
-- Additional OAuth providers (Microsoft, Apple)
-- Webhook notifications
-- Mobile app support (PWA)
-- API documentation (Swagger/OpenAPI)
+Planned features for future releases:
+
+- **Background job processing** for large PDFs (prevent timeouts)
+- **GPT-4 Vision support** for scanned/image-based documents
+- **Advanced analytics dashboard** with spending trends and charts
+- **Additional OAuth providers** (Microsoft, Apple Sign-In)
+- **User profile page** with account management
+- **Settings page** with customization options
+- **Custom AI model selection** (GPT-4o, Claude, Gemini, etc.)
+- **Webhook notifications** for integrations
+- **Mobile app support** (PWA first, then React Native)
+- **API documentation** (Swagger/OpenAPI)
 
 See [BACKLOG.md](BACKLOG.md) for detailed roadmap and priorities.
+
+## Recent Updates
+
+### Latest Features (December 2025)
+
+**✅ AWS S3 Cloud Storage Integration**
+- Hybrid local/S3 storage support with automatic fallback
+- Presigned URLs for secure PDF downloads
+- User-isolated S3 structure (`users/{userId}/invoices/`)
+- Server-side AES256 encryption
+- Orphaned file cleanup automation
+- Zero-downtime migration strategy
+
+**✅ Vendor Management System**
+- Automatic vendor detection from invoice text
+- Custom extraction templates per vendor
+- Field mappings and validation rules
+- Three-strategy detection (identifier, AI, fuzzy matching)
+
+**✅ PostgreSQL Database Migration**
+- Production-ready scalability
+- Optimized text field storage
+- Comprehensive migration guide
 
 ## License
 

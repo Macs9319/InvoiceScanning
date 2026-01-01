@@ -21,7 +21,13 @@ export type LineItemData = z.infer<typeof LineItemSchema>;
 export type ExtractedInvoiceData = z.infer<typeof ExtractedInvoiceSchema>;
 
 // Invoice status types
-export type InvoiceStatus = "pending" | "processing" | "processed" | "failed";
+export type InvoiceStatus =
+  | "pending"
+  | "queued"            // NEW: Job queued in background queue
+  | "processing"
+  | "processed"
+  | "validation_failed" // NEW: Processed but validation rules failed
+  | "failed";
 
 // Extended types for frontend display
 export interface InvoiceWithLineItems {
