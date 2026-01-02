@@ -54,6 +54,19 @@ export async function GET(
                 name: true,
               },
             },
+            lineItems: {
+              select: {
+                id: true,
+                description: true,
+                quantity: true,
+                unitPrice: true,
+                amount: true,
+                order: true,
+              },
+              orderBy: {
+                order: 'asc',
+              },
+            },
           },
           orderBy: {
             createdAt: 'desc',

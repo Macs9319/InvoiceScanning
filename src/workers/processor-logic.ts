@@ -11,6 +11,9 @@ import { applyFieldMappings, separateStandardAndCustomFields } from '@/lib/ai/fi
 import { applyValidationRules } from '@/lib/ai/schema-builder';
 import { getStorageForFile } from '@/lib/storage';
 import { InvoiceJobData, InvoiceJobResult } from '@/lib/queue/invoice-queue';
+import { updateRequestStatistics } from '@/lib/requests/statistics';
+import { calculateRequestStatus } from '@/lib/requests/status-calculator';
+import { logAuditEvent, AuditEventTypes, AuditEventCategories } from '@/lib/audit/logger';
 
 export async function processInvoiceJob(
   job: Job<InvoiceJobData>
@@ -49,6 +52,34 @@ export async function processInvoiceJob(
         },
       },
     });
+
+    // 2a. Update request statistics when processing starts
+    if (invoice.requestId) {
+      try {
+        await updateRequestStatistics(prisma, invoice.requestId);
+
+        // Log audit event for invoice processing start
+        await logAuditEvent({
+          requestId: invoice.requestId,
+          userId: invoice.userId,
+          eventType: AuditEventTypes.INVOICE_PROCESSING_STARTED,
+          eventCategory: AuditEventCategories.INVOICE_OPERATION,
+          severity: 'info',
+          summary: `Invoice processing started: ${invoice.fileName}`,
+          details: {
+            attempt: job.attemptsMade,
+            jobId: job.id,
+          },
+          targetType: 'invoice',
+          targetId: invoiceId,
+          previousValue: { status: invoice.status },
+          newValue: { status: 'processing' },
+        });
+      } catch (requestUpdateError) {
+        console.error('Failed to update request at processing start:', requestUpdateError);
+        // Non-fatal error, continue processing
+      }
+    }
 
     // 3. Read PDF file from storage (S3 or local - auto-detected from URL)
     const storage = getStorageForFile(invoice.fileUrl);
@@ -198,6 +229,94 @@ export async function processInvoiceJob(
         });
     }
 
+    // 13. Update request statistics and status if invoice belongs to a request
+    if (invoice.requestId) {
+      try {
+        // Update request statistics
+        await updateRequestStatistics(prisma, invoice.requestId);
+
+        // Log audit event for invoice processing completion
+        await logAuditEvent({
+          requestId: invoice.requestId,
+          userId: invoice.userId,
+          eventType: AuditEventTypes.INVOICE_PROCESSING_COMPLETED,
+          eventCategory: AuditEventCategories.INVOICE_OPERATION,
+          severity: finalStatus === 'validation_failed' ? 'warning' : 'info',
+          summary: `Invoice processed: ${invoice.fileName}`,
+          details: {
+            invoiceNumber: standardFields.invoiceNumber,
+            totalAmount: standardFields.totalAmount,
+            currency: standardFields.currency,
+            validationStatus: finalStatus,
+            vendorDetected: detectedVendorId !== null,
+            templateUsed: template !== null,
+          },
+          targetType: 'invoice',
+          targetId: invoiceId,
+          newValue: {
+            status: finalStatus,
+            totalAmount: standardFields.totalAmount,
+            currency: standardFields.currency,
+          },
+        });
+
+        // Check if request status needs to be updated
+        const request = await prisma.uploadRequest.findUnique({
+          where: { id: invoice.requestId },
+          include: {
+            invoices: {
+              select: {
+                status: true,
+              },
+            },
+          },
+        });
+
+        if (request) {
+          const newStatus = calculateRequestStatus(request.invoices);
+
+          // Only update if status changed
+          if (newStatus !== request.status) {
+            const updateData: any = {
+              status: newStatus,
+              updatedAt: new Date(),
+            };
+
+            // Set completedAt if request is now in a terminal state
+            if (['completed', 'partial', 'failed'].includes(newStatus)) {
+              updateData.completedAt = new Date();
+            }
+
+            await prisma.uploadRequest.update({
+              where: { id: invoice.requestId },
+              data: updateData,
+            });
+
+            // Log request status change
+            await logAuditEvent({
+              requestId: invoice.requestId,
+              userId: invoice.userId,
+              eventType: AuditEventTypes.REQUEST_UPDATED,
+              eventCategory: AuditEventCategories.REQUEST_LIFECYCLE,
+              severity: 'info',
+              summary: `Request status changed: ${request.status} → ${newStatus}`,
+              details: {
+                trigger: 'invoice_processing_completed',
+                invoiceId,
+              },
+              targetType: 'request',
+              targetId: invoice.requestId,
+              previousValue: { status: request.status },
+              newValue: { status: newStatus },
+            });
+          }
+        }
+      } catch (requestUpdateError) {
+        console.error('Failed to update request statistics:', requestUpdateError);
+        // Non-fatal error, don't fail the job
+      }
+    }
+
     return {
       success: true,
       invoiceId,
@@ -207,6 +326,12 @@ export async function processInvoiceJob(
     // Store detailed error message
     const errorMessage =
       processingError instanceof Error ? processingError.message : 'Unknown processing error';
+
+    // Get invoice to check for requestId
+    const failedInvoice = await prisma.invoice.findUnique({
+      where: { id: invoiceId },
+      select: { requestId: true, userId: true, fileName: true },
+    });
 
     // Update invoice with error
     await prisma.invoice.update({
@@ -220,6 +345,90 @@ export async function processInvoiceJob(
         }),
       },
     });
+
+    // Update request statistics if invoice belongs to a request
+    if (failedInvoice?.requestId) {
+      try {
+        // Update request statistics
+        await updateRequestStatistics(prisma, failedInvoice.requestId);
+
+        // Log audit event for invoice processing failure
+        await logAuditEvent({
+          requestId: failedInvoice.requestId,
+          userId: failedInvoice.userId,
+          eventType: AuditEventTypes.INVOICE_PROCESSING_FAILED,
+          eventCategory: AuditEventCategories.INVOICE_OPERATION,
+          severity: 'error',
+          summary: `Invoice processing failed: ${failedInvoice.fileName}`,
+          details: {
+            errorMessage,
+            attempt: job.attemptsMade,
+          },
+          targetType: 'invoice',
+          targetId: invoiceId,
+          newValue: {
+            status: 'failed',
+            error: errorMessage,
+          },
+        });
+
+        // Check if request status needs to be updated
+        const request = await prisma.uploadRequest.findUnique({
+          where: { id: failedInvoice.requestId },
+          include: {
+            invoices: {
+              select: {
+                status: true,
+              },
+            },
+          },
+        });
+
+        if (request) {
+          const newStatus = calculateRequestStatus(request.invoices);
+
+          // Only update if status changed
+          if (newStatus !== request.status) {
+            const updateData: any = {
+              status: newStatus,
+              updatedAt: new Date(),
+            };
+
+            // Set completedAt if request is now in a terminal state
+            if (['completed', 'partial', 'failed'].includes(newStatus)) {
+              updateData.completedAt = new Date();
+            }
+
+            await prisma.uploadRequest.update({
+              where: { id: failedInvoice.requestId },
+              data: updateData,
+            });
+
+            // Log request status change
+            await logAuditEvent({
+              requestId: failedInvoice.requestId,
+              userId: failedInvoice.userId,
+              eventType: AuditEventTypes.REQUEST_UPDATED,
+              eventCategory: AuditEventCategories.REQUEST_LIFECYCLE,
+              severity: 'warning',
+              summary: `Request status changed: ${request.status} → ${newStatus}`,
+              details: {
+                trigger: 'invoice_processing_failed',
+                invoiceId,
+                errorMessage,
+              },
+              targetType: 'request',
+              targetId: failedInvoice.requestId,
+              previousValue: { status: request.status },
+              newValue: { status: newStatus },
+            });
+          }
+        }
+      } catch (requestUpdateError) {
+        console.error('Failed to update request after processing failure:', requestUpdateError);
+        // Non-fatal error, don't prevent the retry
+      }
+    }
 
     throw processingError; // Re-throw for BullMQ retry logic
   }

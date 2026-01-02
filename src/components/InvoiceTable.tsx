@@ -139,10 +139,12 @@ export default function InvoiceTable({
         header: "Description",
         cell: (info) => {
           const items = info.getValue();
-          const descriptions = items.map((item) => item.description).join(", ");
+          const descriptions = items && items.length > 0
+            ? items.map((item) => item.description).join(", ")
+            : "N/A";
           return (
             <span className="text-sm max-w-md truncate block">
-              {descriptions || "N/A"}
+              {descriptions}
             </span>
           );
         },

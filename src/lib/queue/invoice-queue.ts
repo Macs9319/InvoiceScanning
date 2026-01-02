@@ -21,23 +21,25 @@ export interface InvoiceJobResult {
 
 const QUEUE_NAME = process.env.QUEUE_NAME || 'invoice-processing';
 
-const queueOptions: QueueOptions = {
-  connection: getRedisClient(),
-  defaultJobOptions: {
-    attempts: parseInt(process.env.JOB_ATTEMPTS || '3'),
-    backoff: {
-      type: (process.env.JOB_BACKOFF_TYPE || 'exponential') as 'exponential' | 'fixed',
-      delay: parseInt(process.env.JOB_BACKOFF_DELAY || '5000'),
+function getQueueOptions(): QueueOptions {
+  return {
+    connection: getRedisClient(),
+    defaultJobOptions: {
+      attempts: parseInt(process.env.JOB_ATTEMPTS || '3'),
+      backoff: {
+        type: (process.env.JOB_BACKOFF_TYPE || 'exponential') as 'exponential' | 'fixed',
+        delay: parseInt(process.env.JOB_BACKOFF_DELAY || '5000'),
+      },
+      removeOnComplete: {
+        age: 24 * 3600, // Keep completed jobs for 24 hours
+        count: 1000,
+      },
+      removeOnFail: {
+        age: 7 * 24 * 3600, // Keep failed jobs for 7 days
+      },
     },
-    removeOnComplete: {
-      age: 24 * 3600, // Keep completed jobs for 24 hours
-      count: 1000,
-    },
-    removeOnFail: {
-      age: 7 * 24 * 3600, // Keep failed jobs for 7 days
-    },
-  },
-};
+  };
+}
 
 let invoiceQueue: Queue<InvoiceJobData, InvoiceJobResult> | null = null;
 
@@ -45,7 +47,7 @@ export function getInvoiceQueue(): Queue<InvoiceJobData, InvoiceJobResult> {
   if (!invoiceQueue) {
     invoiceQueue = new Queue<InvoiceJobData, InvoiceJobResult>(
       QUEUE_NAME,
-      queueOptions
+      getQueueOptions()
     );
   }
   return invoiceQueue;

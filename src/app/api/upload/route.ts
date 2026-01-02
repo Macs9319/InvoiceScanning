@@ -2,10 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db/prisma";
 import { auth } from "@/lib/auth";
 import { getDefaultStorage } from "@/lib/storage";
-import { logAuditEvent, logBulkAuditEvents, AuditEventTypes, AuditEventCategories } from "@/lib/audit/logger";
+import { logBulkAuditEvents, AuditEventTypes, AuditEventCategories } from "@/lib/audit/logger";
 import { extractRequestMetadata } from "@/lib/audit/middleware";
 import { updateRequestStatistics } from "@/lib/requests/statistics";
-import { generateAutoRequestTitle } from "@/types/request";
 
 export async function POST(request: NextRequest) {
   try {
@@ -26,9 +25,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "No files uploaded" }, { status: 400 });
     }
 
-    // Handle request association
+    // Handle request association (optional - files can be uploaded without a request)
     let uploadRequestId: string | null = null;
-    let autoCreatedRequest = false;
 
     if (requestIdParam) {
       // Verify request exists and belongs to user
@@ -58,36 +56,8 @@ export async function POST(request: NextRequest) {
       }
 
       uploadRequestId = requestIdParam;
-    } else {
-      // Auto-create request (hybrid approach)
-      const autoRequest = await prisma.uploadRequest.create({
-        data: {
-          userId: session.user.id,
-          title: generateAutoRequestTitle(),
-          status: 'draft',
-          autoProcess: false,
-        },
-      });
-
-      uploadRequestId = autoRequest.id;
-      autoCreatedRequest = true;
-
-      // Log request creation
-      const { ipAddress, userAgent } = extractRequestMetadata(request);
-      await logAuditEvent({
-        requestId: autoRequest.id,
-        userId: session.user.id,
-        eventType: AuditEventTypes.REQUEST_CREATED,
-        eventCategory: AuditEventCategories.REQUEST_LIFECYCLE,
-        severity: 'info',
-        summary: `Auto-created request: ${autoRequest.title}`,
-        targetType: 'request',
-        targetId: autoRequest.id,
-        newValue: autoRequest,
-        ipAddress,
-        userAgent,
-      });
     }
+    // If no requestId provided, invoices will be created without a request (orphaned)
 
     const storage = getDefaultStorage();
     const uploadedFiles = [];
@@ -146,33 +116,32 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Update request statistics
+    // Update request statistics and log audit events only if uploaded to a request
     if (uploadRequestId) {
       await updateRequestStatistics(prisma, uploadRequestId);
+
+      // Log audit events for uploaded invoices
+      const { ipAddress, userAgent } = extractRequestMetadata(request);
+      const auditEvents = uploadedFiles.map(file => ({
+        requestId: uploadRequestId,
+        userId: session.user.id,
+        eventType: AuditEventTypes.INVOICE_UPLOADED,
+        eventCategory: AuditEventCategories.INVOICE_OPERATION,
+        severity: 'info' as const,
+        summary: `Invoice uploaded: ${file.fileName}`,
+        targetType: 'invoice',
+        targetId: file.id,
+        ipAddress,
+        userAgent,
+      }));
+
+      await logBulkAuditEvents(auditEvents);
     }
-
-    // Log audit events for uploaded invoices
-    const { ipAddress, userAgent } = extractRequestMetadata(request);
-    const auditEvents = uploadedFiles.map(file => ({
-      requestId: uploadRequestId!,
-      userId: session.user.id,
-      eventType: AuditEventTypes.INVOICE_UPLOADED,
-      eventCategory: AuditEventCategories.INVOICE_OPERATION,
-      severity: 'info' as const,
-      summary: `Invoice uploaded: ${file.fileName}`,
-      targetType: 'invoice',
-      targetId: file.id,
-      ipAddress,
-      userAgent,
-    }));
-
-    await logBulkAuditEvents(auditEvents);
 
     return NextResponse.json({
       success: true,
       files: uploadedFiles,
       requestId: uploadRequestId,
-      autoCreated: autoCreatedRequest,
     });
   } catch (error) {
     console.error("Error uploading files:", error);

@@ -6,6 +6,7 @@ import { RequestDetailCard } from "@/components/requests/RequestDetailCard";
 import { RequestStatistics } from "@/components/requests/RequestStatistics";
 import { AuditTrail } from "@/components/requests/AuditTrail";
 import { RequestTimeline } from "@/components/requests/RequestTimeline";
+import { AddFilesDialog } from "@/components/requests/AddFilesDialog";
 import InvoiceTable from "@/components/InvoiceTable";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -208,6 +209,18 @@ export default function RequestDetailPage() {
           </TabsList>
 
           <TabsContent value="invoices" className="space-y-4">
+            {/* Add Files button */}
+            <div className="flex justify-between items-center">
+              <p className="text-sm text-muted-foreground">
+                {request.invoices && request.invoices.length > 0
+                  ? `${request.invoices.length} invoice(s) in this request`
+                  : 'No invoices yet'}
+              </p>
+              {request.status === 'draft' && (
+                <AddFilesDialog requestId={requestId} onSuccess={fetchData} />
+              )}
+            </div>
+
             {request.invoices && request.invoices.length > 0 ? (
               <InvoiceTable
                 invoices={request.invoices as InvoiceWithLineItems[]}
@@ -219,15 +232,13 @@ export default function RequestDetailPage() {
                 <Upload className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
                 <p className="text-muted-foreground">No invoices in this request yet</p>
                 <p className="text-sm text-muted-foreground mt-2">
-                  Upload invoices and add them to this request to get started
+                  Upload PDF invoices to add them to this request
                 </p>
-                <Button
-                  variant="outline"
-                  onClick={() => router.push("/")}
-                  className="mt-4"
-                >
-                  Go to Upload
-                </Button>
+                {request.status === 'draft' && (
+                  <div className="mt-4">
+                    <AddFilesDialog requestId={requestId} onSuccess={fetchData} />
+                  </div>
+                )}
               </div>
             )}
           </TabsContent>
