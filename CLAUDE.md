@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Invoice Scanner is a Next.js 15 application that uses OpenAI GPT-4o-mini to extract structured data from invoice and receipt PDFs. The app features user authentication with NextAuth.js, multi-user support with data isolation, batch processing, persistent storage with PostgreSQL/Prisma, multi-format exports (Excel, CSV, JSON), advanced filtering and search, dark mode theming, error handling with retry functionality, vendor management with AI-powered detection, and detailed invoice viewing with loading states.
+Invoice Scanner is a Next.js 15 application that uses OpenAI GPT-4o-mini to extract structured data from invoice and receipt PDFs. The app features user authentication with NextAuth.js, multi-user support with data isolation, batch processing with BullMQ, request management with comprehensive audit trails, persistent storage with PostgreSQL/Prisma, multi-format exports (Excel, CSV, JSON), advanced filtering and search, dark mode theming, error handling with retry functionality, vendor management with AI-powered detection, cloud storage with AWS S3, and detailed invoice viewing with loading states.
 
 ## Development Commands
 
@@ -87,6 +87,56 @@ The application implements a **Storage Strategy Pattern** for flexible file stor
 - S3 files: `s3://bucket/users/{userId}/invoices/filename.pdf` (full S3 URI stored in DB)
 - Storage factory detects provider from URL prefix
 
+### Request Management with Audit Trails
+
+The application features a comprehensive **Request Management System** that groups invoice uploads into logical batches with full audit trail tracking for compliance and debugging.
+
+**Request Lifecycle**:
+- `draft` - Created, files can be added/removed, not yet submitted
+- `processing` - At least one invoice queued or actively processing
+- `completed` - All invoices successfully processed
+- `partial` - Some processed, some failed (manual intervention needed)
+- `failed` - All invoices failed processing
+
+**Hybrid Request Creation**:
+- **Auto-created**: Upload endpoint automatically creates requests with title like "Batch 2026-01-02 14:30"
+- **Manual**: Users can create named requests (e.g., "December 2025 Expenses") via UI
+- **Backward Compatible**: Existing invoices with `requestId: null` remain valid ("orphaned" invoices)
+
+**Audit Trail Features**:
+- Tracks all operations: request lifecycle, invoice operations, vendor operations, user actions
+- Records IP address and user agent for forensic analysis
+- Stores before/after values for data changes
+- Severity levels: info, warning, error
+- Organized by event categories for filtering and reporting
+- Non-blocking: audit failures don't break primary operations
+
+**Statistics Tracking**:
+- Real-time metrics: totalInvoices, processedCount, failedCount, pendingCount, queuedCount, processingCount
+- Financial data: totalAmount, averageAmount (by currency)
+- Performance metrics: averageProcessingTime (milliseconds)
+- Success rate calculation: processed / total * 100
+
+**Request APIs**:
+- `/api/requests` - Create request, list with filtering/pagination
+- `/api/requests/[requestId]` - Get, update, delete individual request
+- `/api/requests/[requestId]/files` - Add/remove invoices from request
+- `/api/requests/[requestId]/submit` - Submit all pending invoices for AI processing
+- `/api/requests/[requestId]/retry` - Retry all failed invoices
+- `/api/requests/[requestId]/stats` - Get comprehensive statistics
+- `/api/requests/[requestId]/audit` - Get filtered audit logs with pagination
+- `/api/requests/[requestId]/timeline` - Get chronological event timeline
+- `/api/requests/bulk-delete` - Delete multiple requests at once
+- `/api/requests/bulk-export` - Export multiple requests to JSON/CSV
+- `/api/audit` - Global audit log viewing with advanced filtering
+
+**Frontend Components**:
+- `/requests` - Request list page with search, filters, bulk operations
+- `/requests/[requestId]` - Detail page with tabs: Invoices, Timeline, Audit Trail
+- Real-time statistics dashboard with progress bars
+- Visual timeline grouped by date
+- Bulk selection and operations (export, delete)
+
 ### Data Flow
 
 ```
@@ -132,6 +182,19 @@ src/
 │   │   │   ├── route.ts                 # CRUD operations for vendors
 │   │   │   ├── [vendorId]/route.ts      # Individual vendor operations
 │   │   │   └── [vendorId]/templates/    # Vendor template management
+│   │   ├── requests/
+│   │   │   ├── route.ts                 # Create request, list with filtering (auth required)
+│   │   │   ├── [requestId]/
+│   │   │   │   ├── route.ts             # Get, update, delete request (auth + ownership)
+│   │   │   │   ├── files/route.ts       # Add/remove invoices from request
+│   │   │   │   ├── submit/route.ts      # Submit request for processing
+│   │   │   │   ├── retry/route.ts       # Retry failed invoices
+│   │   │   │   ├── stats/route.ts       # Get request statistics
+│   │   │   │   ├── audit/route.ts       # Get request audit logs
+│   │   │   │   └── timeline/route.ts    # Get request timeline
+│   │   │   ├── bulk-delete/route.ts     # Bulk delete requests
+│   │   │   └── bulk-export/route.ts     # Bulk export requests to JSON/CSV
+│   │   ├── audit/route.ts       # Global audit log viewing (auth required)
 │   │   └── export/
 │   │       ├── route.ts                 # Generate Excel/CSV/JSON exports (auth required)
 │   │       └── bulk/route.ts            # Bulk export for selected invoices (auth required)
@@ -140,6 +203,9 @@ src/
 │   ├── forgot-password/page.tsx # Password reset request page
 │   ├── reset-password/page.tsx  # Password reset confirmation page
 │   ├── vendors/page.tsx         # Vendor management page
+│   ├── requests/
+│   │   ├── page.tsx             # Request list page with search, filters, bulk operations
+│   │   └── [requestId]/page.tsx # Request detail page with tabs (Invoices, Timeline, Audit Trail)
 │   ├── page.tsx                 # Main UI (client component, protected)
 │   └── layout.tsx               # Root layout with SessionProvider
 ├── components/
@@ -161,6 +227,15 @@ src/
 │   │   ├── CreateVendorDialog.tsx
 │   │   ├── VendorDetailDialog.tsx
 │   │   └── TemplateEditor.tsx
+│   ├── requests/                # Request management components
+│   │   ├── RequestTable.tsx              # Request list table with selection
+│   │   ├── RequestFilters.tsx            # Search and status filtering
+│   │   ├── CreateRequestDialog.tsx       # Create new request dialog
+│   │   ├── RequestStatusBadge.tsx        # Visual status indicators
+│   │   ├── RequestDetailCard.tsx         # Request metadata card
+│   │   ├── RequestStatistics.tsx         # Statistics dashboard with progress bars
+│   │   ├── AuditTrail.tsx                # Detailed audit log viewer
+│   │   └── RequestTimeline.tsx           # Visual event timeline
 │   └── ui/                      # shadcn/ui components (button, dialog, skeleton, select, checkbox, etc.)
 ├── lib/
 │   ├── auth.ts                  # NextAuth configuration (Credentials + Google OAuth, JWT)
@@ -179,10 +254,18 @@ src/
 │   │   └── index.ts             # Public exports
 │   ├── export/                  # Excel, CSV, JSON generators
 │   ├── email/                   # Email sending (nodemailer) and templates
+│   ├── requests/                # Request management utilities
+│   │   ├── status-calculator.ts # Request status calculation logic
+│   │   └── statistics.ts        # Statistics calculation and formatting
+│   ├── audit/                   # Audit logging system
+│   │   ├── logger.ts            # Core audit logging functions
+│   │   └── middleware.ts        # Request metadata extraction (IP, user agent)
 │   └── db/prisma.ts             # Prisma client singleton
 └── types/
     ├── invoice.ts               # Zod schemas + TypeScript types for invoices
-    └── vendor.ts                # Zod schemas + TypeScript types for vendors
+    ├── vendor.ts                # Zod schemas + TypeScript types for vendors
+    ├── request.ts               # Zod schemas + TypeScript types for requests
+    └── audit.ts                 # Zod schemas + TypeScript types for audit logs
 ```
 
 ## Database Schema
@@ -192,18 +275,45 @@ src/
 - `email`: Unique identifier for login
 - `password`: Hashed with bcryptjs (10 rounds), nullable for OAuth-only accounts
 - `emailVerified`: Timestamp of email verification (null until verified)
-- One-to-many relationships: invoices, accounts (OAuth), sessions, vendors
+- One-to-many relationships: invoices, accounts (OAuth), sessions, vendors, uploadRequests, auditLogs
 - All user data cascades on delete
+
+### UploadRequest Model (Request Management)
+- Groups invoice uploads into logical batches for workflow organization
+- `title`: Request name (auto-generated like "Batch 2026-01-02 14:30" or user-provided)
+- `status`: Request lifecycle state (draft, processing, completed, partial, failed)
+- `defaultVendorId`: Optional vendor to apply to all invoices in request
+- `autoProcess`: Flag for automatic processing when invoices are uploaded
+- **Cached Statistics**: totalInvoices, processedCount, failedCount, pendingCount, queuedCount, processingCount, totalAmount, currency
+- **Performance Metrics**: submittedAt, completedAt timestamps for analytics
+- Indexes on `userId`, `status`, `createdAt`, `submittedAt` for efficient querying
+- One-to-many relationships: invoices, auditLogs
+- Deletion behavior: When deleted, invoices become "orphaned" (requestId set to null via onDelete: SetNull)
+
+### AuditLog Model (Compliance & Debugging)
+- Comprehensive audit trail for all system operations
+- `eventType`: Specific action (request_created, invoice_uploaded, etc.)
+- `eventCategory`: Grouping (request_lifecycle, invoice_operation, vendor_operation, user_action)
+- `severity`: Event importance level (info, warning, error)
+- `summary`: Human-readable description of the event
+- `details`: JSON field with additional context
+- **Change Tracking**: previousValue, newValue (JSON snapshots for before/after comparison)
+- **Forensic Data**: ipAddress, userAgent for security and troubleshooting
+- `targetType` and `targetId`: Links events to specific resources (request, invoice, vendor)
+- Indexes on `requestId`, `userId`, `eventType`, `eventCategory`, `createdAt`, composite `(targetType, targetId)`
+- Append-only design: No updates or deletes via API (cascade delete with request/user)
 
 ### Invoice Model
 - Primary entity with one-to-many relationship to LineItem
 - **User Isolation**: `userId` foreign key ensures each invoice belongs to one user
+- **Request Association**: `requestId` links invoice to UploadRequest (nullable, onDelete: SetNull creates "orphaned" invoices)
 - `status` field: "pending" → "processing" → "processed" or "failed"
 - `rawText`: Full PDF text extracted by pdfreader
 - `aiResponse`: Raw JSON response from OpenAI OR error details (stored as string)
-- `fileUrl`: Relative path from `public/` (e.g., `/uploads/filename.pdf`)
+- `fileUrl`: Can be local path (`/uploads/...`) or S3 URI (`s3://...`)
 - **Vendor Integration**: `vendorId` links to vendor, `detectedVendorId` stores auto-detection result, `templateId` stores template used, `customData` stores custom field values
-- Indexes on `userId`, `status`, `date`, and `vendorId` for query performance
+- **Background Job Tracking**: jobId (BullMQ), processingStartedAt, processingCompletedAt, retryCount, lastError
+- Indexes on `userId`, `status`, `date`, `vendorId`, `jobId`, `requestId` for query performance
 
 ### LineItem Model
 - Child entity linked via `invoiceId` (cascade delete enabled)

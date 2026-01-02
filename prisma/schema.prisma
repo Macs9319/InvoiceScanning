@@ -11,18 +11,20 @@ datasource db {
 }
 
 model User {
-  id            String    @id @default(cuid())
-  name          String?
-  email         String    @unique
-  emailVerified DateTime?
-  password      String?
-  image         String?
-  invoices      Invoice[]
-  accounts      Account[]
-  sessions      Session[]
-  vendors       Vendor[]
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id             String          @id @default(cuid())
+  name           String?
+  email          String          @unique
+  emailVerified  DateTime?
+  password       String?
+  image          String?
+  invoices       Invoice[]
+  accounts       Account[]
+  sessions       Session[]
+  vendors        Vendor[]
+  uploadRequests UploadRequest[]
+  auditLogs      AuditLog[]
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
 }
 
 model Account {
@@ -85,6 +87,10 @@ model Invoice {
   rawText          String?     @db.Text
   aiResponse       String?     @db.Text
 
+  // Request association
+  requestId        String?
+  request          UploadRequest? @relation(fields: [requestId], references: [id], onDelete: SetNull)
+
   // Vendor relationship
   vendorId         String?
   vendor           Vendor?     @relation(fields: [vendorId], references: [id], onDelete: SetNull)
@@ -108,6 +114,7 @@ model Invoice {
   @@index([date])
   @@index([vendorId])
   @@index([jobId])
+  @@index([requestId])
 }
 
 model LineItem {
@@ -123,23 +130,24 @@ model LineItem {
 }
 
 model Vendor {
-  id          String           @id @default(cuid())
-  userId      String
-  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                 String           @id @default(cuid())
+  userId             String
+  user               User             @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  name        String
-  description String?
-  email       String?
-  phone       String?
-  website     String?
-  address     String?
-  identifiers String?
+  name               String
+  description        String?
+  email              String?
+  phone              String?
+  website            String?
+  address            String?
+  identifiers        String?
 
-  templates   VendorTemplate[]
-  invoices    Invoice[]
+  templates          VendorTemplate[]
+  invoices           Invoice[]
+  defaultForRequests UploadRequest[]
 
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
 
   @@index([userId])
   @@index([name])
@@ -167,4 +175,81 @@ model VendorTemplate {
 
   @@index([vendorId])
   @@index([isActive])
+}
+
+model UploadRequest {
+  id               String    @id @default(cuid())
+  userId           String
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Request Metadata
+  title            String?
+  description      String?   @db.Text
+  status           String    @default("draft") // draft, processing, completed, partial, failed
+
+  // Workflow Configuration
+  defaultVendorId  String?
+  defaultVendor    Vendor?   @relation(fields: [defaultVendorId], references: [id], onDelete: SetNull)
+  autoProcess      Boolean   @default(false)
+
+  // Cached Statistics (computed from invoices)
+  totalInvoices    Int       @default(0)
+  processedCount   Int       @default(0)
+  failedCount      Int       @default(0)
+  pendingCount     Int       @default(0)
+  queuedCount      Int       @default(0)
+  processingCount  Int       @default(0)
+  totalAmount      Float?
+  currency         String?   @default("USD")
+
+  // Timestamps
+  submittedAt      DateTime?
+  completedAt      DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  // Relations
+  invoices         Invoice[]
+  auditLogs        AuditLog[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([submittedAt])
+}
+
+model AuditLog {
+  id               String          @id @default(cuid())
+
+  requestId        String?
+  request          UploadRequest?  @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  userId           String
+  user             User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  eventType        String          // request_created, invoice_uploaded, etc.
+  eventCategory    String          // request_lifecycle, invoice_operation, vendor_operation, user_action
+  severity         String          @default("info") // info, warning, error
+
+  summary          String
+  details          String?         @db.Text
+
+  targetType       String?         // "request", "invoice", "vendor"
+  targetId         String?
+
+  previousValue    String?         @db.Text // JSON snapshot before
+  newValue         String?         @db.Text // JSON snapshot after
+
+  ipAddress        String?
+  userAgent        String?         @db.Text
+  metadata         String?         @db.Text
+
+  createdAt        DateTime        @default(now())
+
+  @@index([requestId])
+  @@index([userId])
+  @@index([eventType])
+  @@index([eventCategory])
+  @@index([createdAt])
+  @@index([targetType, targetId])
 }
