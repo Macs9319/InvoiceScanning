@@ -126,22 +126,25 @@ This document tracks planned features, enhancements, and technical improvements 
 
 ---
 
-### 5. Additional OAuth Providers (Microsoft, Apple)
+### 5. Additional OAuth Providers (Microsoft, Apple) ✅
 **Current Issue**: Only Google OAuth supported
 **Impact**: Medium - broader user base
 **Effort**: Small-Medium (1-2 days per provider)
-**Status**: Not Started
+**Status**: ✅ Completed (2026-01-02)
 
-**Suggested Approach**:
-- Add Microsoft/Azure AD provider to NextAuth config
-- Add Sign in with Apple provider
-- Update login UI with new provider buttons
-- Test account linking with existing email accounts
+**Completed Features**:
+- ✅ Microsoft Azure AD OAuth provider with multi-tenant support
+- ✅ Apple Sign-In provider with private key authentication
+- ✅ Account linking enabled for all OAuth providers
+- ✅ Login UI updated with Microsoft and Apple buttons with brand icons
+- ✅ Comprehensive setup documentation in README.md
+- ✅ Environment variable documentation in .env.example
 
-**Files to Modify**:
-- `src/lib/auth.ts` - Add new providers
-- `src/app/login/page.tsx` - Add provider buttons
-- Environment variables - Add provider credentials
+**Files Modified**:
+- `src/lib/auth.ts` - Added AzureADProvider and AppleProvider with account linking
+- `src/app/login/page.tsx` - Added Microsoft and Apple OAuth buttons
+- `.env.example` - Documented Azure AD and Apple environment variables with setup comments
+- `README.md` - Added detailed setup guides for Microsoft Azure AD and Apple Sign-In
 
 ---
 
@@ -701,7 +704,7 @@ request          UploadRequest? @relation(fields: [requestId], references: [id],
 
 ### Phase 2 - Enhanced Features (4-5 weeks)
 4. GPT-4 Vision for scanned documents
-5. Additional OAuth providers
+5. ~~Additional OAuth providers~~ ✅ **COMPLETED**
 6. ~~Invoice templates & vendor management~~ ✅ **COMPLETED**
 7. User Profile Page
 8. Settings Page
@@ -740,4 +743,4 @@ From CLAUDE.md and codebase analysis:
 
 ---
 
-Last Updated: 2026-01-02 (Updated item #1 Background Job Processing to ✅ Completed; Phase 1 Production Ready items all complete)
+Last Updated: 2026-01-02 (Updated item #5 Additional OAuth Providers to ✅ Completed; Microsoft Azure AD and Apple Sign-In implemented)

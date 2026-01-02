@@ -2,6 +2,8 @@ import NextAuth from "next-auth";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import Credentials from "next-auth/providers/credentials";
 import Google from "next-auth/providers/google";
+import AzureADProvider from "next-auth/providers/azure-ad";
+import AppleProvider from "next-auth/providers/apple";
 import { prisma } from "@/lib/db/prisma";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
@@ -23,6 +25,22 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     Google({
       clientId: process.env.GOOGLE_CLIENT_ID!,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+      allowDangerousEmailAccountLinking: true,
+    }),
+    AzureADProvider({
+      clientId: process.env.AZURE_AD_CLIENT_ID!,
+      clientSecret: process.env.AZURE_AD_CLIENT_SECRET!,
+      tenantId: process.env.AZURE_AD_TENANT_ID || "common",
+      allowDangerousEmailAccountLinking: true,
+    }),
+    AppleProvider({
+      clientId: process.env.APPLE_ID!,
+      clientSecret: {
+        appleId: process.env.APPLE_ID!,
+        teamId: process.env.APPLE_TEAM_ID!,
+        privateKey: process.env.APPLE_PRIVATE_KEY!,
+        keyId: process.env.APPLE_KEY_ID!,
+      },
       allowDangerousEmailAccountLinking: true,
     }),
     Credentials({

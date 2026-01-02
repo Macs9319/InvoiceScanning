@@ -7,8 +7,11 @@ A Next.js web application that uses OpenAI GPT-4 to extract structured data from
 - **Multi-User Authentication**: Secure user authentication system with:
   - Email/password registration and login
   - Google OAuth sign-in
+  - Microsoft Azure AD sign-in
+  - Apple Sign-In
   - Email verification
   - Password reset flow
+  - Account linking support
 - **Background Job Processing**: Asynchronous invoice processing with:
   - BullMQ job queue with Redis for reliable processing
   - Real-time status updates via polling (queued → processing → processed)
@@ -49,7 +52,7 @@ A Next.js web application that uses OpenAI GPT-4 to extract structured data from
 
 - **Framework**: Next.js 15 with App Router
 - **Language**: TypeScript
-- **Authentication**: NextAuth.js v5 with Google OAuth
+- **Authentication**: NextAuth.js v5 with multiple OAuth providers (Google, Microsoft, Apple)
 - **Database**: PostgreSQL with Prisma ORM (SQLite supported for local development)
 - **Background Jobs**: BullMQ with Redis for asynchronous processing
 - **Cloud Storage**: AWS S3 with presigned URLs (local filesystem fallback)
@@ -68,6 +71,8 @@ A Next.js web application that uses OpenAI GPT-4 to extract structured data from
 - OpenAI API key ([Get one here](https://platform.openai.com/api-keys))
 - (Optional) AWS Account with S3 access for cloud storage
 - (Optional) Google OAuth credentials for Google sign-in
+- (Optional) Microsoft Azure AD credentials for Microsoft sign-in
+- (Optional) Apple Developer account for Apple Sign-In
 - (Optional) SMTP server credentials for email features
 
 ## Setup Instructions
@@ -113,6 +118,17 @@ STORAGE_PROVIDER=s3  # Use 's3' for cloud storage, 'local' for filesystem
 GOOGLE_CLIENT_ID=your_google_client_id_here
 GOOGLE_CLIENT_SECRET=your_google_client_secret_here
 
+# Microsoft Azure AD OAuth (Optional - for Microsoft sign-in)
+AZURE_AD_CLIENT_ID=your_application_client_id_here
+AZURE_AD_CLIENT_SECRET=your_client_secret_value_here
+AZURE_AD_TENANT_ID=common
+
+# Apple Sign-In (Optional - for Apple sign-in)
+APPLE_ID=com.yourdomain.invoice-scanner.signin
+APPLE_TEAM_ID=your_team_id_here
+APPLE_KEY_ID=your_key_id_here
+APPLE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nYour_private_key_content_here\n-----END PRIVATE KEY-----"
+
 # Email/SMTP (Optional - for email verification and password reset)
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
@@ -151,6 +167,79 @@ NEXT_PUBLIC_POLLING_INTERVAL=10000  # Frontend polling interval (10 seconds)
    - Development: `http://localhost:3000/api/auth/callback/google`
    - Production: `https://yourdomain.com/api/auth/callback/google`
 8. Copy the Client ID and Client Secret to `.env.local`
+
+**Optional: Microsoft Azure AD Setup** (for "Sign in with Microsoft"):
+1. Go to [Azure Portal](https://portal.azure.com)
+2. Navigate to "Azure Active Directory" → "App registrations" → "New registration"
+3. Configure application:
+   - **Name**: "Invoice Scanner" (or your choice)
+   - **Supported account types**: "Accounts in any organizational directory and personal Microsoft accounts"
+   - **Redirect URI** (Web):
+     - Development: `http://localhost:3000/api/auth/callback/azure-ad`
+     - Production: `https://yourdomain.com/api/auth/callback/azure-ad`
+4. Click "Register"
+5. Copy the **Application (client) ID** → `AZURE_AD_CLIENT_ID` in `.env.local`
+6. Go to "Certificates & secrets" → "Client secrets" → "New client secret"
+   - **Description**: "NextAuth.js Secret"
+   - **Expires**: 24 months (or your preference)
+   - Click "Add"
+   - **IMPORTANT**: Copy the secret **VALUE** immediately (you won't see it again!)
+   - Paste into `AZURE_AD_CLIENT_SECRET` in `.env.local`
+7. Go to "Overview" page → Copy **Directory (tenant) ID** → `AZURE_AD_TENANT_ID` in `.env.local`
+   - **Tip**: Use `common` for multi-tenant support (allows both personal and work accounts)
+8. Optional: Configure API permissions (default User.Read is sufficient)
+
+**Optional: Apple Sign-In Setup** (for "Sign in with Apple"):
+
+**Prerequisites**: Active Apple Developer account ($99/year)
+
+1. Go to [Apple Developer Portal](https://developer.apple.com/account)
+2. Navigate to "Certificates, Identifiers & Profiles"
+
+3. **Create App ID**:
+   - Identifiers → **+** button → App IDs → Continue
+   - **Description**: "Invoice Scanner Web"
+   - **Bundle ID**: `com.yourdomain.invoice-scanner` (use reverse domain notation)
+   - **Capabilities**: Check "Sign in with Apple"
+   - Click "Continue" → "Register"
+
+4. **Create Services ID**:
+   - Identifiers → **+** button → Services IDs → Continue
+   - **Description**: "Invoice Scanner Sign In"
+   - **Identifier**: `com.yourdomain.invoice-scanner.signin` → This becomes `APPLE_ID`
+   - Click "Continue" → "Register"
+
+5. **Configure Services ID**:
+   - Click on the Services ID you just created
+   - Check "Sign in with Apple"
+   - Click "Configure" next to "Sign in with Apple"
+   - **Primary App ID**: Select the App ID created in step 3
+   - **Web Domain**: `yourdomain.com` (production domain, no http/https)
+   - **Return URLs**:
+     - Development: `http://localhost:3000/api/auth/callback/apple`
+     - Production: `https://yourdomain.com/api/auth/callback/apple`
+   - Click "Save" → "Continue" → "Register"
+
+6. **Create Private Key**:
+   - Keys → **+** button
+   - **Key Name**: "Invoice Scanner Sign In Key"
+   - Check "Sign in with Apple"
+   - Click "Configure" → Select your App ID → Save
+   - Click "Continue" → "Register"
+   - **Download the key file** (AuthKey_XXXXXXXXXX.p8)
+   - **IMPORTANT**: You can only download this once! Keep it secure.
+   - Copy the **Key ID** (10 characters) → `APPLE_KEY_ID` in `.env.local`
+
+7. **Get Team ID**:
+   - Go to "Membership" in your developer account
+   - Copy your **Team ID** (10 characters) → `APPLE_TEAM_ID` in `.env.local`
+
+8. **Configure Private Key Environment Variable**:
+   - Open the downloaded .p8 file in a text editor
+   - Copy the entire content
+   - Replace newlines with `\n` literal string
+   - Paste into `APPLE_PRIVATE_KEY` in `.env.local` (keep the quotes)
+   - Example format: `"-----BEGIN PRIVATE KEY-----\nMIGT...\n-----END PRIVATE KEY-----"`
 
 **Optional: Email Configuration** (for verification emails and password reset):
 - For Gmail: Use an [App Password](https://support.google.com/accounts/answer/185833)
@@ -305,6 +394,20 @@ The application supports multiple authentication methods:
    - Email is pre-verified for Google accounts
    - Can link existing email account to Google
 
+3. **Microsoft Sign-In**:
+   - Click "Sign in with Microsoft" on the login page
+   - Supports both personal Microsoft accounts and organizational accounts
+   - Automatically creates account on first sign-in
+   - Can link existing email account to Microsoft
+
+4. **Apple Sign-In**:
+   - Click "Sign in with Apple" on the login page
+   - Automatically creates account on first sign-in
+   - Can link existing email account to Apple
+   - Requires Apple Developer account to configure
+
+**Account Linking**: All OAuth providers support account linking. If you sign in with Google/Microsoft/Apple using an email that already exists in the system, it will automatically link to your existing account.
+
 ### Uploading and Processing Invoices
 
 1. **Upload PDFs**:
@@ -429,6 +532,8 @@ Select multiple invoices using checkboxes to perform bulk actions:
 - `POST /api/auth/signin` - Sign in with credentials
 - `POST /api/auth/signout` - Sign out
 - `GET /api/auth/callback/google` - Google OAuth callback
+- `GET /api/auth/callback/azure-ad` - Microsoft Azure AD OAuth callback
+- `GET /api/auth/callback/apple` - Apple Sign-In callback
 - `POST /api/forgot-password` - Request password reset
 - `POST /api/reset-password` - Reset password with token
 - `GET /api/verify-email` - Verify email with token
@@ -577,7 +682,6 @@ Planned features for future releases:
 
 - **GPT-4 Vision support** for scanned/image-based documents
 - **Advanced analytics dashboard** with spending trends and charts
-- **Additional OAuth providers** (Microsoft, Apple Sign-In)
 - **User profile page** with account management
 - **Settings page** with customization options
 - **Custom AI model selection** (GPT-4o, Claude, Gemini, etc.)
