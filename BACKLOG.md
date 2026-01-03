@@ -291,13 +291,24 @@ model UserSettings {
 
 ---
 
-### 9. Custom AI Model Provider Selection
+### 9. Custom AI Model Provider Selection ✅
 **Current Issue**: Hardcoded to use only OpenAI GPT-4o-mini model
 **Impact**: Medium - provides flexibility, cost optimization, and performance tuning
 **Effort**: Medium-Large (4-5 days)
-**Status**: Not Started
+**Status**: ✅ Completed (2026-01-03)
 
-**Suggested Features**:
+**Completed Features**:
+- ✅ **Multiple AI Providers**: OpenAI, Anthropic, Google Gemini, DeepSeek, OpenRouter
+- ✅ **Configuration hierarchy**: Vendor overrides > User preference > System default
+- ✅ **Settings UI**: New "AI Models" tab to configure provider/model/API keys
+- ✅ **Architecture**: Strategy pattern with `AIProvider` factory and `ModelSelector`
+
+**Files Created/Modified**:
+- `src/lib/ai/providers/` (Base, OpenAI, DeepSeek, etc.)
+- `src/lib/ai/model-selector.ts`
+- `src/app/api/ai-config/route.ts`
+- `src/components/settings/AIModelSettings.tsx`
+
 - **Multiple OpenAI Models**:
   - GPT-4o-mini (current, cost-effective)
   - GPT-4o (balanced performance)
@@ -732,7 +743,7 @@ From CLAUDE.md and codebase analysis:
 1. **Scanned PDFs**: Text-based extraction only - GPT-4 Vision integration planned but not implemented
 2. ~~**Local File Storage**: Files stored in `public/uploads/` - not suitable for production~~ ✅ **RESOLVED** - Migrated to AWS S3 with hybrid support (2025-12-31)
 3. ~~**No Background Jobs**: Processing is synchronous - large PDFs may timeout~~ ✅ **RESOLVED** - BullMQ job queue with Redis implemented (2026-01-02)
-4. **Hardcoded AI Model**: Only supports OpenAI GPT-4o-mini - no provider or model flexibility (see #9 above)
+4. ~~**Hardcoded AI Model**: Only supports OpenAI GPT-4o-mini~~ ✅ **RESOLVED** - Implemented multi-provider support (OpenAI, Anthropic, DeepSeek, etc.) (2026-01-03)
 5. ~~**SQLite**: Not suitable for concurrent writes in high-traffic scenarios~~ ✅ **RESOLVED** - Migrated to PostgreSQL (2025-12-30)
 6. ~~**No Vendor Management**: Manual categorization required~~ ✅ **RESOLVED** - Vendor templates & detection implemented (2025-12-30)
 

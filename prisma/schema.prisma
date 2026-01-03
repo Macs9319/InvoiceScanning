@@ -25,6 +25,8 @@ model User {
   uploadRequests UploadRequest[]
   auditLogs      AuditLog[]
   settings       UserSettings?
+  aiModelConfigs AIModelConfig[]
+  aiUsageLogs    AIUsageLog[]
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
 }
@@ -76,40 +78,41 @@ model PasswordResetToken {
 }
 
 model Invoice {
-  id               String      @id @default(cuid())
-  userId           String
-  user             User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  fileName         String
-  fileUrl          String?
-  invoiceNumber    String?
-  date             DateTime?
-  totalAmount      Float?
-  currency         String?     @default("USD")
-  status           String      @default("pending")
-  rawText          String?     @db.Text
-  aiResponse       String?     @db.Text
+  id            String    @id @default(cuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fileName      String
+  fileUrl       String?
+  invoiceNumber String?
+  date          DateTime?
+  totalAmount   Float?
+  currency      String?   @default("USD")
+  status        String    @default("pending")
+  rawText       String?   @db.Text
+  aiResponse    String?   @db.Text
 
   // Request association
-  requestId        String?
-  request          UploadRequest? @relation(fields: [requestId], references: [id], onDelete: SetNull)
+  requestId String?
+  request   UploadRequest? @relation(fields: [requestId], references: [id], onDelete: SetNull)
 
   // Vendor relationship
   vendorId         String?
-  vendor           Vendor?     @relation(fields: [vendorId], references: [id], onDelete: SetNull)
+  vendor           Vendor? @relation(fields: [vendorId], references: [id], onDelete: SetNull)
   detectedVendorId String?
   templateId       String?
-  customData       String?     @db.Text
+  customData       String? @db.Text
 
   // Background job tracking
-  jobId                 String?     // BullMQ job ID
-  processingStartedAt   DateTime?   // When job started processing
-  processingCompletedAt DateTime?   // When job completed
-  retryCount            Int         @default(0)  // Number of retries
-  lastError             String?     @db.Text     // Last error message (for debugging)
+  jobId                 String? // BullMQ job ID
+  processingStartedAt   DateTime? // When job started processing
+  processingCompletedAt DateTime? // When job completed
+  retryCount            Int       @default(0) // Number of retries
+  lastError             String?   @db.Text // Last error message (for debugging)
 
-  lineItems        LineItem[]
-  createdAt        DateTime    @default(now())
-  updatedAt        DateTime    @updatedAt
+  lineItems LineItem[]
+  aiUsageLogs AIUsageLog[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
 
   @@index([userId])
   @@index([status])
@@ -120,99 +123,100 @@ model Invoice {
 }
 
 model LineItem {
-  id          String    @id @default(cuid())
+  id          String   @id @default(cuid())
   invoiceId   String
-  invoice     Invoice   @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   description String
   quantity    Float?
   unitPrice   Float?
   amount      Float?
-  order       Int       @default(0)
-  createdAt   DateTime  @default(now())
+  order       Int      @default(0)
+  createdAt   DateTime @default(now())
 }
 
 model Vendor {
-  id                 String           @id @default(cuid())
-  userId             String
-  user               User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  name               String
-  description        String?
-  email              String?
-  phone              String?
-  website            String?
-  address            String?
-  identifiers        String?
+  name        String
+  description String?
+  email       String?
+  phone       String?
+  website     String?
+  address     String?
+  identifiers String?
 
   templates          VendorTemplate[]
   invoices           Invoice[]
   defaultForRequests UploadRequest[]
+  aiModelConfigs     AIModelConfig[]
 
-  createdAt          DateTime         @default(now())
-  updatedAt          DateTime         @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([userId])
   @@index([name])
 }
 
 model VendorTemplate {
-  id              String    @id @default(cuid())
-  vendorId        String
-  vendor          Vendor    @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  id       String @id @default(cuid())
+  vendorId String
+  vendor   Vendor @relation(fields: [vendorId], references: [id], onDelete: Cascade)
 
-  name            String
-  description     String?
-  isActive        Boolean   @default(true)
+  name        String
+  description String?
+  isActive    Boolean @default(true)
 
-  customPrompt    String?     @db.Text
-  customFields    String?     @db.Text
-  fieldMappings   String?     @db.Text
-  validationRules String?     @db.Text
+  customPrompt    String? @db.Text
+  customFields    String? @db.Text
+  fieldMappings   String? @db.Text
+  validationRules String? @db.Text
 
-  invoiceCount    Int         @default(0)
-  lastUsedAt      DateTime?
+  invoiceCount Int       @default(0)
+  lastUsedAt   DateTime?
 
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([vendorId])
   @@index([isActive])
 }
 
 model UploadRequest {
-  id               String    @id @default(cuid())
-  userId           String
-  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   // Request Metadata
-  title            String?
-  description      String?   @db.Text
-  status           String    @default("draft") // draft, processing, completed, partial, failed
+  title       String?
+  description String? @db.Text
+  status      String  @default("draft") // draft, processing, completed, partial, failed
 
   // Workflow Configuration
-  defaultVendorId  String?
-  defaultVendor    Vendor?   @relation(fields: [defaultVendorId], references: [id], onDelete: SetNull)
-  autoProcess      Boolean   @default(false)
+  defaultVendorId String?
+  defaultVendor   Vendor? @relation(fields: [defaultVendorId], references: [id], onDelete: SetNull)
+  autoProcess     Boolean @default(false)
 
   // Cached Statistics (computed from invoices)
-  totalInvoices    Int       @default(0)
-  processedCount   Int       @default(0)
-  failedCount      Int       @default(0)
-  pendingCount     Int       @default(0)
-  queuedCount      Int       @default(0)
-  processingCount  Int       @default(0)
-  totalAmount      Float?
-  currency         String?   @default("USD")
+  totalInvoices   Int     @default(0)
+  processedCount  Int     @default(0)
+  failedCount     Int     @default(0)
+  pendingCount    Int     @default(0)
+  queuedCount     Int     @default(0)
+  processingCount Int     @default(0)
+  totalAmount     Float?
+  currency        String? @default("USD")
 
   // Timestamps
-  submittedAt      DateTime?
-  completedAt      DateTime?
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  submittedAt DateTime?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   // Relations
-  invoices         Invoice[]
-  auditLogs        AuditLog[]
+  invoices  Invoice[]
+  auditLogs AuditLog[]
 
   @@index([userId])
   @@index([status])
@@ -221,32 +225,32 @@ model UploadRequest {
 }
 
 model AuditLog {
-  id               String          @id @default(cuid())
+  id String @id @default(cuid())
 
-  requestId        String?
-  request          UploadRequest?  @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  requestId String?
+  request   UploadRequest? @relation(fields: [requestId], references: [id], onDelete: Cascade)
 
-  userId           String
-  user             User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  eventType        String          // request_created, invoice_uploaded, etc.
-  eventCategory    String          // request_lifecycle, invoice_operation, vendor_operation, user_action
-  severity         String          @default("info") // info, warning, error
+  eventType     String // request_created, invoice_uploaded, etc.
+  eventCategory String // request_lifecycle, invoice_operation, vendor_operation, user_action
+  severity      String @default("info") // info, warning, error
 
-  summary          String
-  details          String?         @db.Text
+  summary String
+  details String? @db.Text
 
-  targetType       String?         // "request", "invoice", "vendor"
-  targetId         String?
+  targetType String? // "request", "invoice", "vendor"
+  targetId   String?
 
-  previousValue    String?         @db.Text // JSON snapshot before
-  newValue         String?         @db.Text // JSON snapshot after
+  previousValue String? @db.Text // JSON snapshot before
+  newValue      String? @db.Text // JSON snapshot after
 
-  ipAddress        String?
-  userAgent        String?         @db.Text
-  metadata         String?         @db.Text
+  ipAddress String?
+  userAgent String? @db.Text
+  metadata  String? @db.Text
 
-  createdAt        DateTime        @default(now())
+  createdAt DateTime @default(now())
 
   @@index([requestId])
   @@index([userId])
@@ -257,29 +261,73 @@ model AuditLog {
 }
 
 model UserSettings {
-  id                    String   @id @default(cuid())
-  userId                String   @unique
-  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   // Appearance
-  theme                 String?  @default("system")
-  locale                String?  @default("en")
-  dateFormat            String?  @default("MM/DD/YYYY")
+  theme      String? @default("system")
+  locale     String? @default("en")
+  dateFormat String? @default("MM/DD/YYYY")
 
   // Notifications
-  emailOnSuccess        Boolean  @default(false)
-  emailOnFailure        Boolean  @default(true)
-  weeklySummary         Boolean  @default(false)
+  emailOnSuccess Boolean @default(false)
+  emailOnFailure Boolean @default(true)
+  weeklySummary  Boolean @default(false)
 
   // Processing
-  defaultCurrency       String?  @default("USD")
-  autoProcessOnUpload   Boolean  @default(false)
-  pdfRetentionDays      Int?     @default(365)
+  defaultCurrency     String? @default("USD")
+  autoProcessOnUpload Boolean @default(false)
+  pdfRetentionDays    Int?    @default(365)
 
   // Export
-  defaultExportFormat   String?  @default("excel")
+  defaultExportFormat    String? @default("excel")
   exportFilenameTemplate String? @default("{date}_{invoiceNumber}")
 
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model AIModelConfig {
+  id                  String   @id @default(cuid())
+  userId              String?
+  user                User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  vendorId            String?
+  vendor              Vendor?  @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+
+  provider            String   // "openai", "anthropic", "google", "azure", "ollama"
+  model               String   // "gpt-4o-mini", "claude-3-5-sonnet", etc.
+  apiKey              String?  // Optional override
+  temperature         Float    @default(0.1)
+  maxTokens           Int?
+  
+  isActive            Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@unique([userId, vendorId])
+  @@index([userId])
+  @@index([vendorId])
+}
+
+model AIUsageLog {
+  id                  String   @id @default(cuid())
+  userId              String
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  invoiceId           String?
+  invoice             Invoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+
+  provider            String
+  model               String
+  promptTokens        Int
+  completionTokens    Int
+  totalTokens         Int
+  estimatedCost       Float    // in USD
+  processingTime      Int      // in milliseconds
+
+  createdAt           DateTime @default(now())
+
+  @@index([userId])
+  @@index([invoiceId])
+  @@index([createdAt])
 }

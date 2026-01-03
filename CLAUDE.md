@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Invoice Scanner is a Next.js 15 application that uses OpenAI GPT-4o-mini to extract structured data from invoice and receipt PDFs. The app features multi-provider authentication (email/password, Google OAuth, Microsoft Azure AD, Apple Sign-In) with NextAuth.js, multi-user support with data isolation, asynchronous background job processing with BullMQ and Redis, request management with comprehensive audit trails, persistent storage with PostgreSQL/Prisma, multi-format exports (Excel, CSV, JSON), advanced filtering and search, dark mode theming, error handling with retry functionality, vendor management with AI-powered detection, cloud storage with AWS S3, and detailed invoice viewing with loading states.
+Invoice Scanner is a Next.js 15 application that uses AI (OpenAI, Anthropic, Google, etc.) to extract structured data from invoice and receipt PDFs. The app features multi-provider authentication (email/password, Google OAuth, Microsoft Azure AD, Apple Sign-In) with NextAuth.js, multi-user support with data isolation, asynchronous background job processing with BullMQ and Redis, request management with comprehensive audit trails, persistent storage with PostgreSQL/Prisma, multi-format exports (Excel, CSV, JSON), advanced filtering and search, dark mode theming, error handling with retry functionality, vendor management with AI-powered detection, cloud storage with AWS S3, and detailed invoice viewing with loading states.
 
 ## Development Commands
 
@@ -418,6 +418,11 @@ Required in `.env.local`:
 # OpenAI Configuration (Required)
 OPENAI_API_KEY=sk-...                                    # OpenAI API key (required for AI extraction)
 
+# Alternative AI Providers (Optional)
+ANTHROPIC_API_KEY=sk-ant-...                             # Anthropic API key
+GOOGLE_AI_API_KEY=...                                    # Google Gemini API key
+# DeepSeek/OpenRouter keys can be set via generic config or specific vars if implemented
+
 # Database (Required)
 # For PostgreSQL (Production):
 DATABASE_URL="postgresql://user:password@localhost:5432/invoice_scanner?schema=public"
@@ -515,11 +520,15 @@ For production file storage instead of local filesystem:
 
 ## AI Extraction Logic
 
-### OpenAI Configuration
-- Model: `gpt-4o-mini` (src/lib/ai/extractor.ts:93) - Cost-effective choice, ~60-80% cheaper than GPT-4 Turbo
-- Uses `response_format: { type: "json_object" }` to enforce JSON responses
-- Temperature: 0.1 for consistent, deterministic extraction
-- Zod validation ensures type safety before database insertion
+### AI Provider Architecture
+- **Strategy Pattern**: `AIProvider` abstract base class defines the contract for all providers.
+- **Implementations**:
+  - `OpenAIProvider`: Handles OpenAI models (GPT-4o, etc.)
+  - `DeepSeekProvider` / `OpenRouterProvider`: Extend generic `OpenAICompatibleProvider`
+  - Future: Anthropic, Google implementations
+- **Factory**: `AIProviderFactory` instantiates the correct provider based on configuration.
+- **Model Selection**: `ModelSelector` determines the effective configuration (Vendor Override > User Config > System Default).
+- **Configuration**: Managed via `AIModelConfig` model and `/api/ai-config` endpoint.
 
 ### Vendor Detection
 Three-strategy approach for automatic vendor detection:

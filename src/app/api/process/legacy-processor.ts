@@ -77,7 +77,7 @@ export async function processInvoiceSync(
       try {
         const detection = await detectVendorFromText(pdfText, userId);
         detectedVendorId = detection.vendorId;
-        finalVendorId = detection.vendorId;
+        finalVendorId = detection.vendorId || undefined;
 
         console.log(`Vendor detection: ${detection.matchReason}, confidence: ${detection.confidence}, vendor: ${detection.detectedName || 'none'}`);
       } catch (detectionError) {
@@ -104,7 +104,7 @@ export async function processInvoiceSync(
     // Extract invoice data using AI with template
     let extractedData;
     try {
-      extractedData = await extractInvoiceData(pdfText, template);
+      extractedData = await extractInvoiceData(pdfText, template, userId);
     } catch (aiError) {
       throw new Error(`AI extraction failed: ${aiError instanceof Error ? aiError.message : 'Unknown error'}`);
     }

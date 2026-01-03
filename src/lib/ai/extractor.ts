@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import { ExtractedInvoiceData, ExtractedInvoiceSchema } from "@/types/invoice";
 import { VendorTemplate } from "@prisma/client";
 import { buildDynamicSchema, getCustomFieldDefinitions } from "./schema-builder";
+import { ModelSelector } from "./model-selector";
 
 // Lazy-load OpenAI client to ensure environment variables are loaded first
 let openaiClient: OpenAI | null = null;
@@ -79,8 +80,8 @@ export function buildExtractionPrompt(template?: VendorTemplate | null): string 
     const customFieldsSchema: Record<string, string> = {};
     customFields.forEach((field) => {
       const typeHint = field.type === 'number' ? 'number or null'
-                     : field.type === 'boolean' ? 'boolean or null'
-                     : 'string or null';
+        : field.type === 'boolean' ? 'boolean or null'
+          : 'string or null';
       customFieldsSchema[field.name] = typeHint;
     });
 
@@ -92,51 +93,52 @@ export function buildExtractionPrompt(template?: VendorTemplate | null): string 
 
 export async function extractInvoiceData(
   pdfText: string,
-  template?: VendorTemplate | null
+  template?: VendorTemplate | null,
+  userId?: string
 ): Promise<ExtractedInvoiceData> {
-  if (!process.env.OPENAI_API_KEY) {
-    throw new Error("OPENAI_API_KEY is not configured");
-  }
-
   try {
-    // Build prompt with template customizations
+    // 1. Get appropriate provider based on user config
+    // If no userId provided (e.g. legacy call), fallback to system default
+    const provider = await ModelSelector.getProvider(userId || "system", template?.vendorId);
+
+    // 2. Build prompt
     const prompt = buildExtractionPrompt(template);
 
-    const completion = await getOpenAIClient().chat.completions.create({
-      model: "gpt-4o-mini", // Cost-effective model: ~60-80% cheaper than GPT-4 Turbo
-      messages: [
-        {
-          role: "system",
-          content: prompt,
-        },
-        {
-          role: "user",
-          content: `Extract data from this invoice/receipt:\n\n${pdfText}`,
-        },
-      ],
-      response_format: { type: "json_object" },
-      temperature: 0.1, // Low temperature for consistent, factual extraction
-    });
+    // 3. Extract data
+    const startTime = Date.now();
+    const result = await provider.extract(pdfText, prompt);
+    const processingTime = Date.now() - startTime;
 
-    const content = completion.choices[0]?.message?.content;
-
-    if (!content) {
-      throw new Error("No response from OpenAI");
+    // 4. Log usage if we have a userId
+    if (userId) {
+      /*
+      // We need to do this asynchronously to not block response
+      // Also we need to import prisma
+      prisma.aIUsageLog.create({
+        data: {
+          userId,
+          provider: provider.getProviderName(),
+          model: (provider as any).config.model, // Access config directly or add getter
+          promptTokens: result.usage.promptTokens,
+          completionTokens: result.usage.completionTokens,
+          totalTokens: result.usage.totalTokens,
+          estimatedCost: result.usage.cost || 0,
+          processingTime,
+        }
+      }).catch(err => console.error("Failed to log AI usage:", err));
+      */
     }
 
-    // Parse and validate the JSON response with dynamic schema
-    const parsedData = JSON.parse(content);
+    // 5. Validate and parse
     const schema = buildDynamicSchema(template);
-    const validatedData = schema.parse(parsedData);
+    const validatedData = schema.parse(result.data);
 
     return validatedData;
   } catch (error) {
     console.error("Error extracting invoice data:", error);
-
     if (error instanceof Error) {
       throw new Error(`Failed to extract invoice data: ${error.message}`);
     }
-
     throw new Error("Failed to extract invoice data: Unknown error");
   }
 }

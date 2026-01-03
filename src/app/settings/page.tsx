@@ -11,6 +11,8 @@ import { NotificationSettings } from "@/components/settings/NotificationSettings
 import { ProcessingSettings } from "@/components/settings/ProcessingSettings";
 import { ExportSettings } from "@/components/settings/ExportSettings";
 import { SecuritySettings } from "@/components/settings/SecuritySettings";
+import { AIModelSettings } from "@/components/settings/AIModelSettings";
+import { Bot } from "lucide-react";
 
 interface UserSettings {
   id: string;
@@ -141,7 +143,7 @@ export default function SettingsPage() {
 
       {/* Tabs */}
       <Tabs defaultValue="appearance" className="space-y-6">
-        <TabsList className="grid w-full grid-cols-5">
+        <TabsList className="grid w-full grid-cols-2 md:grid-cols-3 lg:grid-cols-6 h-auto">
           <TabsTrigger value="appearance" className="gap-2">
             <Palette className="h-4 w-4" />
             <span className="hidden sm:inline">Appearance</span>
@@ -153,6 +155,10 @@ export default function SettingsPage() {
           <TabsTrigger value="processing" className="gap-2">
             <Cog className="h-4 w-4" />
             <span className="hidden sm:inline">Processing</span>
+          </TabsTrigger>
+          <TabsTrigger value="ai-models" className="gap-2">
+            <Bot className="h-4 w-4" />
+            <span className="hidden sm:inline">AI Models</span>
           </TabsTrigger>
           <TabsTrigger value="export" className="gap-2">
             <FileDown className="h-4 w-4" />
@@ -205,6 +211,10 @@ export default function SettingsPage() {
             }}
             onSave={handleSaveSettings}
           />
+        </TabsContent>
+
+        <TabsContent value="ai-models">
+          <AIModelSettings />
         </TabsContent>
 
         <TabsContent value="security">

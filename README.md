@@ -36,7 +36,7 @@ A Next.js web application that uses OpenAI GPT-4 to extract structured data from
   - PDF download feature with time-limited secure URLs
   - Orphaned file cleanup automation
 - **Batch PDF Upload**: Drag-and-drop interface for uploading multiple PDF files
-- **AI-Powered Extraction**: Uses OpenAI GPT-4o-mini to extract:
+- **AI-Powered Extraction**: Support for multiple AI providers (OpenAI, Anthropic, Google, DeepSeek, OpenRouter) to extract:
   - Invoice/Receipt number
   - Date
   - Line item descriptions
@@ -65,7 +65,7 @@ A Next.js web application that uses OpenAI GPT-4 to extract structured data from
 - **Database**: PostgreSQL with Prisma ORM (SQLite supported for local development)
 - **Background Jobs**: BullMQ with Redis for asynchronous processing
 - **Cloud Storage**: AWS S3 with presigned URLs (local filesystem fallback)
-- **AI**: OpenAI GPT-4o-mini API
+- **AI**: OpenAI, Anthropic, Google Gemini, DeepSeek, OpenRouter
 - **PDF Processing**: pdfreader
 - **Email**: Nodemailer (SMTP)
 - **UI Components**: shadcn/ui, Tailwind CSS, Radix UI
@@ -105,6 +105,12 @@ Edit the `.env.local` file with your configuration:
 ```env
 # OpenAI Configuration (Required)
 OPENAI_API_KEY=your_openai_api_key_here
+
+# Alternative AI Providers (Optional)
+ANTHROPIC_API_KEY=your_anthropic_key
+GOOGLE_AI_API_KEY=your_google_key
+# DeepSeek and OpenRouter supported via generic configuration or additional keys
+
 
 # Database (PostgreSQL)
 DATABASE_URL="postgresql://user:password@localhost:5432/invoice_scanner?schema=public"
@@ -478,6 +484,16 @@ For quick one-off uploads, you can use the main upload page:
      - **Validation Failed** (orange): Processed but failed validation rules
      - **Failed** (red): Processing error occurred
    - Click the eye icon to view full invoice details including errors
+
+### AI Model Configuration
+
+Navigate to **Settings > AI Models** to configure your preferred AI provider and model:
+
+1. **Select Provider**: Choose between OpenAI, Anthropic, Google Gemini, DeepSeek, or OpenRouter.
+2. **Select Model**: Choose from available models (e.g., GPT-4o, Claude 3.5 Sonnet, Gemini 1.5 Pro).
+3. **API Keys**: You can set a global API key in `.env.local` or override it in the settings UI.
+4. **Parameters**: Adjust temperature and max tokens to tune extraction performance.
+5. **Vendor Overrides**: Set specific models for specific vendors in the Vendor Management section (coming soon).
 
 ### Exporting Data
 
