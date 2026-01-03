@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ThemeToggle } from "./theme-toggle";
 import { Button } from "./ui/button";
-import { LogOut, User, Building2, FolderKanban } from "lucide-react";
+import { LogOut, User, Building2, FolderKanban, UserCircle } from "lucide-react";
 
 export function Header() {
   const { data: session, status } = useSession();
@@ -33,6 +33,12 @@ export function Header() {
             <Button variant="ghost" size="sm">
               <Building2 className="h-4 w-4 mr-2" />
               Vendors
+            </Button>
+          </Link>
+          <Link href="/profile">
+            <Button variant="ghost" size="sm">
+              <UserCircle className="h-4 w-4 mr-2" />
+              Profile
             </Button>
           </Link>
           <div className="flex items-center gap-2 text-sm">

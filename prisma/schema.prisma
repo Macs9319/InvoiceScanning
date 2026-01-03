@@ -17,6 +17,7 @@ model User {
   emailVerified  DateTime?
   password       String?
   image          String?
+  lastLogin      DateTime?
   invoices       Invoice[]
   accounts       Account[]
   sessions       Session[]
