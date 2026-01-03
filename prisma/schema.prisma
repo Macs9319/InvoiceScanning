@@ -24,6 +24,7 @@ model User {
   vendors        Vendor[]
   uploadRequests UploadRequest[]
   auditLogs      AuditLog[]
+  settings       UserSettings?
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
 }
@@ -253,4 +254,32 @@ model AuditLog {
   @@index([eventCategory])
   @@index([createdAt])
   @@index([targetType, targetId])
+}
+
+model UserSettings {
+  id                    String   @id @default(cuid())
+  userId                String   @unique
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Appearance
+  theme                 String?  @default("system")
+  locale                String?  @default("en")
+  dateFormat            String?  @default("MM/DD/YYYY")
+
+  // Notifications
+  emailOnSuccess        Boolean  @default(false)
+  emailOnFailure        Boolean  @default(true)
+  weeklySummary         Boolean  @default(false)
+
+  // Processing
+  defaultCurrency       String?  @default("USD")
+  autoProcessOnUpload   Boolean  @default(false)
+  pdfRetentionDays      Int?     @default(365)
+
+  // Export
+  defaultExportFormat   String?  @default("excel")
+  exportFilenameTemplate String? @default("{date}_{invoiceNumber}")
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
 }
