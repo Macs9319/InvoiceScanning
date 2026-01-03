@@ -12,6 +12,14 @@ A Next.js web application that uses OpenAI GPT-4 to extract structured data from
   - Email verification
   - Password reset flow
   - Account linking support
+- **Request Management System**: Organize invoices into logical batches with:
+  - Create named requests to group related invoices
+  - Upload multiple files during request creation or add later
+  - Track request lifecycle (draft → processing → completed/partial/failed)
+  - Real-time statistics (total invoices, processed, failed, pending)
+  - Submit entire batches for processing with one click
+  - Comprehensive audit trail for compliance and debugging
+  - Timeline view showing all request events
 - **Background Job Processing**: Asynchronous invoice processing with:
   - BullMQ job queue with Redis for reliable processing
   - Real-time status updates via polling (queued → processing → processed)
@@ -19,6 +27,7 @@ A Next.js web application that uses OpenAI GPT-4 to extract structured data from
   - Dedicated worker process for scalability
   - Graceful fallback to synchronous mode
   - Support for serverless and self-hosted deployments
+  - Request statistics update automatically during processing
 - **Cloud Storage Integration**: Production-ready file storage with:
   - AWS S3 cloud storage with presigned URLs
   - Hybrid local/S3 support for zero-downtime migration
@@ -408,11 +417,48 @@ The application supports multiple authentication methods:
 
 **Account Linking**: All OAuth providers support account linking. If you sign in with Google/Microsoft/Apple using an email that already exists in the system, it will automatically link to your existing account.
 
-### Uploading and Processing Invoices
+### Request Management (Batch Processing)
+
+The request system allows you to organize invoices into named batches for better tracking and compliance:
+
+1. **Create Request with Files**:
+   - Click "Create Request" button on the Requests page
+   - Enter a title (e.g., "December 2025 Expenses") or leave blank for auto-generated name
+   - Add optional description for notes
+   - Drag & drop PDF files directly into the dialog
+   - Click "Create & Upload" to create request and upload files in one step
+
+2. **Add Files to Existing Request**:
+   - Navigate to request detail page
+   - Click "Add Files" button (only available for draft requests)
+   - Upload additional PDFs to the request
+
+3. **Submit Request for Processing**:
+   - Click "Submit" button on request detail page
+   - All pending invoices in the request are queued for processing
+   - Watch real-time statistics update as invoices process
+   - Request status transitions: draft → processing → completed/partial/failed
+
+4. **Monitor Progress**:
+   - **Invoices Tab**: View all invoices in the request with processing status
+   - **Timeline Tab**: See chronological events (upload, processing, completion)
+   - **Audit Trail Tab**: View detailed audit logs for compliance
+
+5. **Request Lifecycle**:
+   - **Draft**: Invoices can be added/removed, request can be edited
+   - **Processing**: At least one invoice is being processed
+   - **Completed**: All invoices successfully processed
+   - **Partial**: Some invoices processed, some failed (intervention needed)
+   - **Failed**: All invoices failed processing
+
+### Direct Upload (Without Request)
+
+For quick one-off uploads, you can use the main upload page:
 
 1. **Upload PDFs**:
    - Drag and drop PDF files into the upload area, or click to select files
    - Supports multiple files at once (max 10MB per file)
+   - These invoices are created without a request (orphaned)
 
 2. **Process with AI**:
    - Click "Process with AI" button after uploading
@@ -464,13 +510,26 @@ Select multiple invoices using checkboxes to perform bulk actions:
 │   │   │   ├── upload/        # File upload endpoint
 │   │   │   ├── process/       # Job dispatcher & legacy processor
 │   │   │   ├── invoices/      # Invoice CRUD, download & status
+│   │   │   ├── requests/      # Request management CRUD & workflow
+│   │   │   ├── audit/         # Audit log endpoints
 │   │   │   ├── export/        # Export endpoints
 │   │   │   ├── vendors/       # Vendor management
 │   │   │   └── admin/         # Admin utilities (cleanup)
+│   │   ├── requests/          # Request pages
+│   │   │   ├── page.tsx      # Request list page
+│   │   │   └── [requestId]/  # Request detail page
 │   │   ├── layout.tsx         # Root layout
 │   │   └── page.tsx           # Main page
 │   ├── components/            # React components
 │   │   ├── ui/               # shadcn/ui components
+│   │   ├── requests/         # Request management UI
+│   │   │   ├── CreateRequestDialog.tsx
+│   │   │   ├── AddFilesDialog.tsx
+│   │   │   ├── RequestTable.tsx
+│   │   │   ├── RequestDetailCard.tsx
+│   │   │   ├── RequestStatistics.tsx
+│   │   │   ├── RequestTimeline.tsx
+│   │   │   └── AuditTrail.tsx
 │   │   ├── vendors/          # Vendor management UI
 │   │   ├── FileUpload.tsx    # Upload component
 │   │   ├── InvoiceTable.tsx  # Table component
@@ -482,6 +541,8 @@ Select multiple invoices using checkboxes to perform bulk actions:
 │   │   ├── pdf/             # PDF parsing
 │   │   ├── storage/         # Cloud storage abstraction
 │   │   ├── queue/           # BullMQ queue management
+│   │   ├── requests/        # Request statistics & status
+│   │   ├── audit/           # Audit logging system
 │   │   ├── export/          # Export functionality
 │   │   ├── db/              # Prisma client
 │   │   └── utils.ts         # Helper functions
@@ -498,10 +559,33 @@ Select multiple invoices using checkboxes to perform bulk actions:
 
 ## Database Schema
 
+**UploadRequest Model** (NEW):
+- `id`: Unique identifier
+- `userId`: User who created the request
+- `title`: Request name (auto-generated or user-provided)
+- `description`: Optional notes
+- `status`: Lifecycle status (draft/processing/completed/partial/failed)
+- `defaultVendorId`: Optional default vendor for all invoices
+- `autoProcess`: Whether to auto-process on upload
+- `totalInvoices`: Cached count of total invoices
+- `processedCount`: Count of successfully processed invoices
+- `failedCount`: Count of failed invoices
+- `pendingCount`: Count of pending invoices
+- `queuedCount`: Count of queued invoices
+- `processingCount`: Count of currently processing invoices
+- `totalAmount`: Sum of all invoice amounts
+- `currency`: Currency code
+- `submittedAt`: When request was submitted for processing
+- `completedAt`: When all processing finished
+- `invoices`: Related invoices
+- `auditLogs`: Related audit events
+
 **Invoice Model**:
 - `id`: Unique identifier
+- `userId`: User who uploaded the invoice
 - `fileName`: Original file name
 - `fileUrl`: Storage path
+- `requestId`: Optional foreign key to UploadRequest
 - `invoiceNumber`: Extracted invoice number
 - `date`: Extracted date
 - `totalAmount`: Total amount
@@ -514,7 +598,29 @@ Select multiple invoices using checkboxes to perform bulk actions:
 - `processingCompletedAt`: When processing finished
 - `retryCount`: Number of retry attempts
 - `lastError`: Last error message
+- `vendorId`: Associated vendor
+- `detectedVendorId`: Auto-detected vendor
+- `templateId`: Applied vendor template
+- `customData`: Custom field values
 - `lineItems`: Related line items
+
+**AuditLog Model** (NEW):
+- `id`: Unique identifier
+- `requestId`: Optional foreign key to UploadRequest
+- `userId`: User who triggered the event
+- `eventType`: Event identifier (request_created, invoice_uploaded, etc.)
+- `eventCategory`: Category (request_lifecycle, invoice_operation, vendor_operation, user_action)
+- `severity`: Log level (info/warning/error)
+- `summary`: Human-readable description
+- `details`: JSON details object
+- `targetType`: Resource type (request/invoice/vendor)
+- `targetId`: Resource identifier
+- `previousValue`: Before state (JSON snapshot)
+- `newValue`: After state (JSON snapshot)
+- `ipAddress`: Client IP address
+- `userAgent`: Client user agent
+- `metadata`: Additional metadata
+- `createdAt`: Event timestamp
 
 **LineItem Model**:
 - `id`: Unique identifier
@@ -538,8 +644,27 @@ Select multiple invoices using checkboxes to perform bulk actions:
 - `POST /api/reset-password` - Reset password with token
 - `GET /api/verify-email` - Verify email with token
 
+### Request Management (NEW)
+- `POST /api/requests` - Create new request
+- `GET /api/requests` - List user's requests with pagination/filters
+- `GET /api/requests/{id}` - Get request details with invoices
+- `PATCH /api/requests/{id}` - Update request metadata
+- `DELETE /api/requests/{id}` - Delete request (invoices become orphaned)
+- `POST /api/requests/{id}/submit` - Submit request for processing
+- `POST /api/requests/{id}/retry` - Retry failed invoices in request
+- `POST /api/requests/{id}/files` - Add files to request (deprecated - use /api/upload)
+- `GET /api/requests/{id}/stats` - Get request statistics
+- `GET /api/requests/{id}/audit` - Get request audit logs
+- `GET /api/requests/{id}/timeline` - Get request timeline view
+- `POST /api/requests/bulk-export` - Export multiple requests (JSON/CSV)
+- `POST /api/requests/bulk-delete` - Delete multiple requests
+
+### Audit Logs (NEW)
+- `GET /api/audit` - Get global audit logs with filters
+- `GET /api/audit/export` - Export audit logs for compliance
+
 ### Invoice Management
-- `POST /api/upload` - Upload PDF files (to S3 or local storage)
+- `POST /api/upload` - Upload PDF files (optionally to a request)
 - `POST /api/process` - Queue invoice for background processing
 - `GET /api/invoices` - Retrieve user's invoices
 - `GET /api/invoices/status?ids={id1,id2,id3}` - Poll job status for processing invoices
@@ -695,7 +820,32 @@ See [BACKLOG.md](BACKLOG.md) for detailed roadmap and priorities.
 
 ### Latest Features (January 2026)
 
-**✅ Background Job Processing System** (NEW)
+**✅ Batch Upload Request Management System** (NEW - January 2, 2026)
+- Organize invoices into named batch requests for better tracking
+- Create requests with integrated file upload (drag & drop)
+- Request lifecycle management (draft → processing → completed/partial/failed)
+- Real-time statistics dashboard (total, processed, failed, pending counts)
+- Submit entire batches for processing with one click
+- Add files to existing requests or upload independently
+- Request detail page with three tabs:
+  - **Invoices**: View all invoices in the request
+  - **Timeline**: Chronological event history
+  - **Audit Trail**: Detailed compliance logs
+- Bulk operations (export multiple requests, delete batches)
+- Backward compatible (orphaned invoices without requests still supported)
+
+**✅ Comprehensive Audit Trail System** (NEW - January 2, 2026)
+- Event logging for compliance and debugging
+- Captures all operations: uploads, processing, deletions, bulk actions
+- Event categories: request lifecycle, invoice operations, vendor operations, user actions
+- Forensic tracking with IP address and user agent
+- Before/after value snapshots for change history
+- Timeline view with chronological events
+- Audit log export for compliance reporting
+- Non-blocking logging (failures don't affect primary operations)
+- Request statistics automatically update during invoice processing
+
+**✅ Background Job Processing System**
 - Asynchronous invoice processing with BullMQ and Redis
 - Dedicated worker process for scalability (5 concurrent jobs)
 - Real-time status updates via frontend polling
@@ -705,6 +855,7 @@ See [BACKLOG.md](BACKLOG.md) for detailed roadmap and priorities.
 - Three operational modes: separate worker, embedded, or synchronous fallback
 - Support for both serverless (Vercel + Upstash) and self-hosted deployments
 - Graceful degradation when Redis is unavailable
+- Request statistics update automatically during processing
 
 **✅ AWS S3 Cloud Storage Integration**
 - Hybrid local/S3 storage support with automatic fallback

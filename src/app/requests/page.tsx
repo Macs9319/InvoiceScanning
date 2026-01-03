@@ -58,6 +58,24 @@ export default function RequestsPage() {
     fetchRequests();
   }, [fetchRequests]);
 
+  // Poll for updates when there are processing requests
+  useEffect(() => {
+    const hasProcessingRequests = requests.some(
+      (request) => request.status === "processing"
+    );
+
+    if (!hasProcessingRequests) {
+      return;
+    }
+
+    // Poll every 10 seconds for processing requests
+    const interval = setInterval(() => {
+      fetchRequests();
+    }, 10000);
+
+    return () => clearInterval(interval);
+  }, [requests, fetchRequests]);
+
   const handleFilterChange = (newFilters: { search: string; status: string }) => {
     setFilters(newFilters);
     setCurrentPage(1); // Reset to first page when filters change

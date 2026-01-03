@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Invoice Scanner is a Next.js 15 application that uses OpenAI GPT-4o-mini to extract structured data from invoice and receipt PDFs. The app features user authentication with NextAuth.js, multi-user support with data isolation, batch processing with BullMQ, request management with comprehensive audit trails, persistent storage with PostgreSQL/Prisma, multi-format exports (Excel, CSV, JSON), advanced filtering and search, dark mode theming, error handling with retry functionality, vendor management with AI-powered detection, cloud storage with AWS S3, and detailed invoice viewing with loading states.
+Invoice Scanner is a Next.js 15 application that uses OpenAI GPT-4o-mini to extract structured data from invoice and receipt PDFs. The app features multi-provider authentication (email/password, Google OAuth, Microsoft Azure AD, Apple Sign-In) with NextAuth.js, multi-user support with data isolation, asynchronous background job processing with BullMQ and Redis, request management with comprehensive audit trails, persistent storage with PostgreSQL/Prisma, multi-format exports (Excel, CSV, JSON), advanced filtering and search, dark mode theming, error handling with retry functionality, vendor management with AI-powered detection, cloud storage with AWS S3, and detailed invoice viewing with loading states.
 
 ## Development Commands
 
@@ -15,11 +15,23 @@ npm install
 # Start development server (runs on http://localhost:3000)
 npm run dev
 
+# Start development server + worker process (recommended)
+npm run dev:all
+
+# Start worker process separately (for background job processing)
+npm run worker:dev
+
 # Production build
 npm run build
 
+# Build worker for production
+npm run build:worker
+
 # Start production server
 npm start
+
+# Start production worker
+npm run worker
 
 # Run linter
 npm run lint
@@ -37,6 +49,11 @@ npx prisma studio            # Open Prisma Studio GUI for database inspection
 # PostgreSQL-specific commands
 psql -U user -d database -c "\dt"    # List all tables
 psql -U user -d database -c "\di"    # List all indexes
+
+# Redis operations (for background job processing)
+redis-cli ping                       # Check Redis connection
+redis-cli --scan --pattern bull:*    # List BullMQ queues
+redis-cli flushdb                    # Clear Redis database (WARNING: deletes all queues)
 ```
 
 ## Architecture Overview
@@ -48,12 +65,14 @@ The application uses NextAuth.js v5 (beta) with multiple authentication provider
 **Authentication Providers**:
 - **Credentials**: Email/password authentication with bcrypt hashing
 - **Google OAuth**: Sign in with Google (requires GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)
-- **Email account linking**: Allows linking Google accounts to existing email accounts
+- **Microsoft Azure AD**: Sign in with Microsoft (requires AZURE_AD_CLIENT_ID, AZURE_AD_CLIENT_SECRET, AZURE_AD_TENANT_ID)
+- **Apple Sign-In**: Sign in with Apple (requires APPLE_ID, APPLE_TEAM_ID, APPLE_KEY_ID, APPLE_PRIVATE_KEY)
+- **Account linking**: Automatically links OAuth accounts to existing email accounts
 
 **Authentication Flow**:
 1. **Signup**: `/api/signup` → validates input with Zod → checks email uniqueness → hashes password with bcrypt → creates user → sends verification email (if SMTP configured)
 2. **Email Verification**: `/api/verify-email` → validates token → marks email as verified
-3. **Login**: `/login` → submits credentials or uses Google OAuth → NextAuth validates → generates JWT session → redirects to main app
+3. **Login**: `/login` → submits credentials or uses OAuth provider (Google/Microsoft/Apple) → NextAuth validates → generates JWT session → redirects to main app
 4. **Password Reset**: `/api/forgot-password` → generates reset token → sends email → `/api/reset-password` → validates token → updates password
 5. **Session Management**: JWT stored in HTTP-only cookie, session validated on each API request
 6. **Protected Routes**: All API routes check `await auth()` and return 401 if unauthenticated
@@ -63,8 +82,36 @@ The application uses NextAuth.js v5 (beta) with multiple authentication provider
 The application follows a three-stage pipeline for invoice processing:
 
 1. **Upload Stage** (`/api/upload`): Validates auth → saves PDF files to storage (S3 or local) via storage factory → creates database record with `status: "pending"` and `userId`
-2. **AI Processing Stage** (`/api/process`): Validates auth + ownership → retrieves PDF from storage → extracts text from PDF → sends to OpenAI GPT-4o-mini → parses structured response → saves to database with line items
+2. **AI Processing Stage** (`/api/process`): Validates auth + ownership → queues job with BullMQ (or processes synchronously as fallback) → worker retrieves PDF from storage → extracts text from PDF → sends to OpenAI GPT-4o-mini → parses structured response → saves to database with line items
 3. **Export Stage** (`/api/export`): Validates auth → queries user's invoices with line items → generates Excel/CSV/JSON files
+
+### Background Job Processing Architecture
+
+The application uses **BullMQ with Redis** for asynchronous invoice processing, with graceful fallback to synchronous processing.
+
+**Three Operational Modes**:
+- **Separate Worker** (`WORKER_MODE=separate`, default): Dedicated worker process for scalability, ideal for production
+- **Embedded Worker** (`WORKER_MODE=embedded`): Worker runs within Next.js process, suitable for single-server deployments
+- **Synchronous Fallback** (`WORKER_MODE=disabled`): Direct processing without queue, used when Redis unavailable
+
+**Job Processing Flow**:
+1. `/api/process` endpoint dispatches job to BullMQ queue (status: `queued`)
+2. Worker process picks up job and begins processing (status: `processing`)
+3. Worker extracts PDF text, calls OpenAI API, validates response with Zod
+4. Worker saves results to database (status: `processed` or `failed`)
+5. Frontend polls `/api/invoices/status` every 10-20 seconds for real-time updates
+6. Failed jobs automatically retry with exponential backoff (3 attempts)
+
+**Worker Configuration**:
+- **Concurrency**: 5 jobs processed simultaneously per worker
+- **Timeout**: 2 minutes per job (configurable via `JOB_TIMEOUT`)
+- **Retry Strategy**: Exponential backoff starting at 5 seconds
+- **Lazy Loading**: OpenAI client loaded only when needed for worker compatibility
+
+**Deployment Modes**:
+- **Self-hosted**: Run separate worker with `npm run worker:dev` or `npm run dev:all`
+- **Serverless** (Vercel): Use Upstash Redis + embedded worker mode or serverless functions
+- **Docker**: Separate containers for Next.js app and worker process
 
 ### Cloud Storage Architecture (Strategy Pattern)
 
@@ -148,18 +195,21 @@ User exports data → ExportButtons → /api/export?format=X (auth check) → Ge
 
 ### Key Libraries & Their Roles
 
-- **NextAuth.js v5**: Authentication with Credentials and Google OAuth providers, JWT sessions
+- **NextAuth.js v5**: Authentication with multiple providers (Credentials, Google, Microsoft, Apple), JWT sessions
+- **BullMQ**: Job queue for asynchronous invoice processing with retry logic
+- **ioredis**: Redis client for job queue and caching
 - **bcryptjs**: Password hashing (10 rounds)
 - **nodemailer**: Email sending for verification and password reset (SMTP)
 - **pdfreader**: Extracts raw text from PDF files (page by page)
 - **OpenAI API**: GPT-4o-mini with JSON mode for structured data extraction
 - **Zod**: Validates AI responses and user input before saving
 - **Prisma**: ORM with PostgreSQL database (SQLite supported for local development)
+- **AWS SDK**: S3 client for cloud storage with presigned URLs
 - **xlsx**: Excel export with multi-sheet support
 - **csv-writer**: CSV export
 - **TanStack Table**: Frontend data table with sorting, filtering, selection
 - **next-themes**: Dark mode support with system theme detection
-- **Radix UI**: Accessible dialog, alert-dialog, select, checkbox components
+- **Radix UI**: Accessible dialog, alert-dialog, select, checkbox, tabs components
 
 ### Directory Structure
 
@@ -238,13 +288,16 @@ src/
 │   │   └── RequestTimeline.tsx           # Visual event timeline
 │   └── ui/                      # shadcn/ui components (button, dialog, skeleton, select, checkbox, etc.)
 ├── lib/
-│   ├── auth.ts                  # NextAuth configuration (Credentials + Google OAuth, JWT)
+│   ├── auth.ts                  # NextAuth configuration (Credentials + Google/Microsoft/Apple OAuth, JWT)
 │   ├── ai/
-│   │   ├── extractor.ts         # OpenAI GPT-4o-mini extraction logic
+│   │   ├── extractor.ts         # OpenAI GPT-4o-mini extraction logic (lazy-loaded)
 │   │   ├── vendor-detector.ts   # Vendor detection from invoice text
 │   │   ├── schema-builder.ts    # Dynamic schema generation for custom fields
 │   │   └── field-mapper.ts      # Field mapping and validation
 │   ├── pdf/parser.ts            # PDF text extraction (pdfreader)
+│   ├── queue/                   # Background job processing (BullMQ)
+│   │   ├── redis-client.ts      # Redis connection singleton
+│   │   └── invoice-queue.ts     # BullMQ queue manager
 │   ├── storage/                 # Storage abstraction layer (Strategy Pattern)
 │   │   ├── storage-strategy.ts  # StorageStrategy interface definition
 │   │   ├── local-storage.ts     # Local filesystem implementation
@@ -261,11 +314,17 @@ src/
 │   │   ├── logger.ts            # Core audit logging functions
 │   │   └── middleware.ts        # Request metadata extraction (IP, user agent)
 │   └── db/prisma.ts             # Prisma client singleton
+├── workers/                     # Background worker processes
+│   ├── invoice-processor.ts     # BullMQ worker entry point
+│   └── processor-logic.ts       # Core processing logic (shared with legacy processor)
+├── hooks/
+│   └── useInvoicePolling.ts     # Frontend polling hook for job status updates
 └── types/
     ├── invoice.ts               # Zod schemas + TypeScript types for invoices
     ├── vendor.ts                # Zod schemas + TypeScript types for vendors
     ├── request.ts               # Zod schemas + TypeScript types for requests
-    └── audit.ts                 # Zod schemas + TypeScript types for audit logs
+    ├── audit.ts                 # Zod schemas + TypeScript types for audit logs
+    └── queue.ts                 # BullMQ job data types and interfaces
 ```
 
 ## Database Schema
@@ -373,6 +432,17 @@ NEXTAUTH_URL=http://localhost:3000                       # Base URL for callback
 GOOGLE_CLIENT_ID=your_google_client_id_here
 GOOGLE_CLIENT_SECRET=your_google_client_secret_here
 
+# Microsoft Azure AD OAuth (Optional - for Microsoft sign-in)
+AZURE_AD_CLIENT_ID=your_application_client_id_here
+AZURE_AD_CLIENT_SECRET=your_client_secret_value_here
+AZURE_AD_TENANT_ID=common                            # Use 'common' for multi-tenant support
+
+# Apple Sign-In (Optional - for Apple sign-in)
+APPLE_ID=com.yourdomain.invoice-scanner.signin
+APPLE_TEAM_ID=your_team_id_here
+APPLE_KEY_ID=your_key_id_here
+APPLE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nYour_private_key_content_here\n-----END PRIVATE KEY-----"
+
 # Email/SMTP (Optional - for email verification and password reset)
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
@@ -389,6 +459,19 @@ AWS_SECRET_ACCESS_KEY=your_secret_access_key_here
 AWS_S3_BUCKET_NAME=invoice-scanner-files
 S3_PRESIGNED_URL_EXPIRY=3600                     # Presigned URL expiration in seconds (default: 1 hour)
 STORAGE_PROVIDER=s3                              # Use 's3' for cloud storage, 'local' for filesystem
+
+# Redis Configuration (Required for background jobs)
+REDIS_URL=redis://localhost:6379                 # Redis connection string (use Upstash for serverless)
+
+# Background Job Configuration
+WORKER_MODE=separate                             # 'separate', 'embedded', or 'disabled'
+QUEUE_NAME=invoice-processing                    # Job queue name
+JOB_ATTEMPTS=3                                   # Max retry attempts
+JOB_BACKOFF_TYPE=exponential                     # Backoff strategy
+JOB_BACKOFF_DELAY=5000                          # Initial delay in ms
+JOB_TIMEOUT=120000                              # Job timeout (2 minutes)
+WORKER_CONCURRENCY=5                             # Concurrent jobs per worker
+NEXT_PUBLIC_POLLING_INTERVAL=10000              # Frontend polling interval (10 seconds)
 ```
 
 **Important**: After adding/changing `.env.local`, restart the dev server.
@@ -611,8 +694,7 @@ export async function GET(request: NextRequest) {
 ## Known Limitations
 
 1. **Scanned PDFs**: Text-based extraction only. Scanned/image PDFs with poor OCR will fail. GPT-4 Vision integration is planned but not implemented.
-2. **No Background Jobs**: Processing is synchronous. Large PDFs may timeout. Consider implementing job queue (Bull/BullMQ with Redis) for production.
-3. **No Automated Tests**: Test suite not yet implemented. Consider adding Jest or Vitest for unit/integration tests.
+2. **No Automated Tests**: Test suite not yet implemented. Consider adding Jest or Vitest for unit/integration tests.
 
 ## Cost Management
 
@@ -698,7 +780,25 @@ Each AI processing call uses `gpt-4o-mini` which is highly cost-effective:
 
 ## Recent Improvements
 
-1. **AWS S3 Cloud Storage Integration** (2025-12-31):
+1. **Request Management with Audit Trails** (2026-01-02):
+   - Batch upload requests to organize invoices into logical groups
+   - Request lifecycle management (draft → processing → completed/partial/failed)
+   - Real-time statistics dashboard with financial metrics
+   - Comprehensive audit trail for compliance and debugging
+   - Timeline view with chronological event history
+   - Request detail page with Invoices, Timeline, and Audit Trail tabs
+   - Bulk operations on requests (export, delete)
+   - Backward compatible with orphaned invoices
+2. **Background Job Processing** (2026-01-02):
+   - BullMQ job queue with Redis for asynchronous processing
+   - Dedicated worker process with 5 concurrent jobs
+   - Real-time status updates via frontend polling
+   - Automatic retry with exponential backoff (3 attempts)
+   - Enhanced status badges (queued, processing, validation_failed)
+   - Three operational modes: separate worker, embedded, synchronous fallback
+   - Support for serverless (Vercel + Upstash) and self-hosted deployments
+   - Graceful degradation when Redis unavailable
+3. **AWS S3 Cloud Storage Integration** (2025-12-31):
    - Implemented Storage Strategy Pattern for flexible file storage
    - AWS S3 cloud storage with presigned URLs for secure downloads
    - Hybrid local/S3 support for zero-downtime migration
@@ -706,22 +806,24 @@ Each AI processing call uses `gpt-4o-mini` which is highly cost-effective:
    - Server-side AES256 encryption
    - Orphaned file cleanup API (`/api/admin/cleanup-orphaned-files`)
    - Storage abstraction: `StorageStrategy` interface with `LocalStorage` and `S3Storage` implementations
-2. **PostgreSQL Database Migration** (2025-12-30):
+4. **PostgreSQL Database Migration** (2025-12-30):
    - Migrated from SQLite to PostgreSQL for production scalability
    - Added optimized @db.Text annotations for large text fields
    - SQLite still supported for local development
    - Created comprehensive migration guide (see MIGRATION_GUIDE.md)
-3. **Multi-Provider Authentication**:
+5. **Multi-Provider Authentication**:
    - Email/password authentication with bcrypt
    - Google OAuth sign-in with account linking
+   - Microsoft Azure AD OAuth for enterprise accounts
+   - Apple Sign-In for iOS/macOS users
    - Email verification flow with token-based validation
    - Password reset functionality via email
-4. **Vendor Management System**:
+6. **Vendor Management System**:
    - Vendor profiles with identifiers for auto-detection
    - Custom extraction templates per vendor
    - Three-strategy vendor detection (identifier, AI, fuzzy)
    - Field mapping and validation rules
-5. **Bulk Operations**:
+7. **Bulk Operations**:
    - Row selection with checkboxes
    - Bulk export (Excel/CSV/JSON) for selected invoices
    - Bulk delete with confirmation

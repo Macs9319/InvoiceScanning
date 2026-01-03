@@ -65,6 +65,20 @@ export default function RequestDetailPage() {
     fetchData();
   }, [fetchData]);
 
+  // Poll for updates when request is processing
+  useEffect(() => {
+    if (!request || request.status !== "processing") {
+      return;
+    }
+
+    // Poll every 10 seconds while processing
+    const interval = setInterval(() => {
+      fetchData();
+    }, 10000);
+
+    return () => clearInterval(interval);
+  }, [request, fetchData]);
+
   const handleSubmit = async () => {
     try {
       const response = await fetch(`/api/requests/${requestId}/submit`, {
