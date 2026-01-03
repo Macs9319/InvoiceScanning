@@ -55,7 +55,7 @@ A Next.js web application that uses OpenAI GPT-4 to extract structured data from
 - **Data Display**: Interactive table with sorting, filtering, and pagination
 - **Multiple Export Formats**: Export processed data to Excel (.xlsx), CSV, or JSON
 - **Persistent Storage**: PostgreSQL database with user isolation and scalability
-- **Responsive UI**: Modern, clean interface with dark mode support
+- **Responsive UI**: Modern interface with collapsible sidebar navigation and dark mode support
 
 ## Tech Stack
 

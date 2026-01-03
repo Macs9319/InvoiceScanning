@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useDropzone } from "react-dropzone";
 import {
@@ -12,6 +12,13 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -31,6 +38,11 @@ interface FileUploadStatus {
   error?: string;
 }
 
+interface VendorSimple {
+  id: string;
+  name: string;
+}
+
 export function CreateRequestDialog({ onSuccess }: CreateRequestDialogProps) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -39,7 +51,32 @@ export function CreateRequestDialog({ onSuccess }: CreateRequestDialogProps) {
   const [autoProcess, setAutoProcess] = useState(false);
   const [files, setFiles] = useState<FileUploadStatus[]>([]);
   const [uploadProgress, setUploadProgress] = useState<string>("");
+  const [vendors, setVendors] = useState<VendorSimple[]>([]);
+  const [selectedVendorId, setSelectedVendorId] = useState<string>("no-vendor");
+  const [fetchingVendors, setFetchingVendors] = useState(false);
+
   const router = useRouter();
+
+  useEffect(() => {
+    if (open) {
+      fetchVendors();
+    }
+  }, [open]);
+
+  const fetchVendors = async () => {
+    try {
+      setFetchingVendors(true);
+      const response = await fetch('/api/vendors');
+      const data = await response.json();
+      if (data.success) {
+        setVendors(data.vendors);
+      }
+    } catch (error) {
+      console.error('Error fetching vendors:', error);
+    } finally {
+      setFetchingVendors(false);
+    }
+  };
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     const newFiles: FileUploadStatus[] = acceptedFiles.map(file => ({
@@ -81,6 +118,7 @@ export function CreateRequestDialog({ onSuccess }: CreateRequestDialogProps) {
           title: title.trim() || undefined,
           description: description.trim() || undefined,
           autoProcess,
+          defaultVendorId: selectedVendorId === "no-vendor" ? undefined : selectedVendorId,
         }),
       });
 
@@ -155,6 +193,7 @@ export function CreateRequestDialog({ onSuccess }: CreateRequestDialogProps) {
       setTitle("");
       setDescription("");
       setAutoProcess(false);
+      setSelectedVendorId("no-vendor");
       setFiles([]);
       setUploadProgress("");
       setOpen(false);
@@ -184,6 +223,7 @@ export function CreateRequestDialog({ onSuccess }: CreateRequestDialogProps) {
         setTitle("");
         setDescription("");
         setAutoProcess(false);
+        setSelectedVendorId("no-vendor");
         setFiles([]);
         setUploadProgress("");
       }
@@ -221,6 +261,31 @@ export function CreateRequestDialog({ onSuccess }: CreateRequestDialogProps) {
                 Leave blank for auto-generated title
               </p>
             </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="vendor">Default Vendor (optional)</Label>
+              <Select
+                value={selectedVendorId}
+                onValueChange={setSelectedVendorId}
+                disabled={loading || fetchingVendors}
+              >
+                <SelectTrigger id="vendor">
+                  <SelectValue placeholder="Select a vendor" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="no-vendor">No specific vendor</SelectItem>
+                  {vendors.map((vendor) => (
+                    <SelectItem key={vendor.id} value={vendor.id}>
+                      {vendor.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                All invoices in this request will be assigned to this vendor
+              </p>
+            </div>
+
             <div className="grid gap-2">
               <Label htmlFor="description">Description (optional)</Label>
               <Textarea

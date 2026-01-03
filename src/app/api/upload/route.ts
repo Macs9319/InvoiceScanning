@@ -27,28 +27,29 @@ export async function POST(request: NextRequest) {
 
     // Handle request association (optional - files can be uploaded without a request)
     let uploadRequestId: string | null = null;
+    let uploadRequest: { defaultVendorId: string | null } | null = null;
 
     if (requestIdParam) {
       // Verify request exists and belongs to user
-      const uploadRequest = await prisma.uploadRequest.findUnique({
+      const request = await prisma.uploadRequest.findUnique({
         where: { id: requestIdParam },
       });
 
-      if (!uploadRequest) {
+      if (!request) {
         return NextResponse.json(
           { error: "Request not found" },
           { status: 404 }
         );
       }
 
-      if (uploadRequest.userId !== session.user.id) {
+      if (request.userId !== session.user.id) {
         return NextResponse.json(
           { error: "Forbidden" },
           { status: 403 }
         );
       }
 
-      if (uploadRequest.status !== 'draft') {
+      if (request.status !== 'draft') {
         return NextResponse.json(
           { error: "Can only upload to draft requests" },
           { status: 400 }
@@ -56,6 +57,7 @@ export async function POST(request: NextRequest) {
       }
 
       uploadRequestId = requestIdParam;
+      uploadRequest = request;
     }
     // If no requestId provided, invoices will be created without a request (orphaned)
 
@@ -106,6 +108,8 @@ export async function POST(request: NextRequest) {
           status: "pending",
           userId: session.user.id,
           requestId: uploadRequestId,
+          vendorId: uploadRequest?.defaultVendorId,
+          detectedVendorId: uploadRequest?.defaultVendorId,
         },
       });
 
@@ -123,8 +127,8 @@ export async function POST(request: NextRequest) {
       // Log audit events for uploaded invoices
       const { ipAddress, userAgent } = extractRequestMetadata(request);
       const auditEvents = uploadedFiles.map(file => ({
-        requestId: uploadRequestId,
-        userId: session.user.id,
+        requestId: uploadRequestId!,
+        userId: session.user!.id,
         eventType: AuditEventTypes.INVOICE_UPLOADED,
         eventCategory: AuditEventCategories.INVOICE_OPERATION,
         severity: 'info' as const,

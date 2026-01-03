@@ -7,7 +7,7 @@ import FileUpload from "@/components/FileUpload";
 import InvoiceTable from "@/components/InvoiceTable";
 import ExportButtons from "@/components/ExportButtons";
 import { InvoiceFilters, type FilterState } from "@/components/InvoiceFilters";
-import { Header } from "@/components/header";
+
 import { BulkActionsToolbar } from "@/components/BulkActionsToolbar";
 import { BulkVendorAssignment } from "@/components/BulkVendorAssignment";
 import { ProcessingProgress, type ProcessingFile } from "@/components/ProcessingProgress";
@@ -167,10 +167,10 @@ export default function Home() {
         prev.map((pf) =>
           pf.id === file.id
             ? {
-                ...pf,
-                status: "failed",
-                error: err instanceof Error ? err.message : "Failed to queue for processing",
-              }
+              ...pf,
+              status: "failed",
+              error: err instanceof Error ? err.message : "Failed to queue for processing",
+            }
             : pf
         )
       );
@@ -494,7 +494,6 @@ export default function Home() {
                 AI-Powered PDF Processing - Upload invoices, receipts, and payment documents
               </p>
             </div>
-            <Header />
           </div>
 
           <Card>

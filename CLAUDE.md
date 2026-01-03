@@ -268,7 +268,8 @@ src/
 │   ├── BulkActionsToolbar.tsx   # Bulk operations toolbar (export, delete, retry)
 │   ├── BulkVendorAssignment.tsx # Bulk vendor assignment UI
 │   ├── ExportButtons.tsx        # Export action buttons
-│   ├── header.tsx               # User info and sign out button
+│   ├── sidebar.tsx              # Application sidebar navigation
+│   ├── app-shell.tsx            # App shell wrapper for sidebar layout
 │   ├── session-provider.tsx     # NextAuth SessionProvider wrapper
 │   ├── theme-provider.tsx       # next-themes provider wrapper
 │   ├── theme-toggle.tsx         # Dark/light mode toggle button
@@ -714,7 +715,7 @@ Each AI processing call uses `gpt-4o-mini` which is highly cost-effective:
 ### Dark Mode
 - Implemented using `next-themes` with system theme detection
 - ThemeProvider wraps the entire app in `src/app/layout.tsx`
-- Theme toggle button in top-right corner (`theme-toggle.tsx`)
+- Theme toggle button in sidebar (`theme-toggle.tsx`)
 - Preference persists in localStorage
 - CSS variables in `globals.css` handle theme colors
 
