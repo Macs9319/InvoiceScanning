@@ -176,33 +176,43 @@ This document tracks planned features, enhancements, and technical improvements 
 
 ---
 
-### 7. User Profile Page
+### 7. User Profile Page ✅
 **Current Issue**: No dedicated page for users to view and edit their profile information
 **Impact**: Medium - improves user experience and account management
 **Effort**: Small-Medium (2-3 days)
-**Status**: Not Started
+**Status**: ✅ Completed (2026-01-03)
 
-**Suggested Features**:
-- Display user information (name, email, profile picture)
-- Edit profile details (name, profile picture)
-- View account creation date and last login
-- Link/unlink OAuth providers (Google, Microsoft, Apple)
-- Display email verification status
-- Avatar upload and management
-- Account statistics (total invoices processed, storage used, etc.)
-- Delete account option with confirmation
+**Completed Features**:
+- ✅ Display user information (name, email, profile picture)
+- ✅ Edit profile details (name)
+- ✅ View account creation date
+- ✅ View connected OAuth providers (Google, Microsoft, Apple)
+- ✅ Display email verification status with badge
+- ✅ Avatar upload and management (JPEG, PNG, GIF, WebP up to 5MB)
+- ✅ Comprehensive account statistics dashboard:
+  - Total/processed/failed/pending invoices
+  - Success rate calculation
+  - Total spending from processed invoices
+  - Vendors and requests counts
+  - Estimated storage usage
+  - Account age in days
+- ✅ Avatar storage via S3 or local storage
+- ✅ Responsive two-column layout with loading states
 
-**Files to Create**:
+**Files Created**:
 - `src/app/profile/page.tsx` - Profile page UI
 - `src/app/api/profile/route.ts` - Profile update endpoint
 - `src/app/api/profile/avatar/route.ts` - Avatar upload endpoint
 - `src/components/ProfileForm.tsx` - Profile edit form component
-- `src/components/AvatarUpload.tsx` - Avatar upload component
-- `src/components/AccountStats.tsx` - Statistics display component
+- `src/components/AvatarUpload.tsx` - Avatar upload component with validation
+- `src/components/AccountStats.tsx` - Statistics display component with cards
+- `src/app/api/profile/route.ts` - Profile GET/PATCH endpoint
+- `src/app/api/profile/avatar/route.ts` - Avatar upload/delete endpoint
+- `src/app/api/profile/stats/route.ts` - Account statistics endpoint
 
-**Files to Modify**:
-- `src/components/header.tsx` - Add link to profile page
-- `prisma/schema.prisma` - Potentially add fields for avatar URL, lastLogin, etc.
+**Files Modified**:
+- `src/components/header.tsx` - Added Profile link to navigation
+- `prisma/schema.prisma` - Added lastLogin field to User model
 
 ---
 
@@ -711,7 +721,7 @@ All phases completed successfully with comprehensive implementation including:
 4. GPT-4 Vision for scanned documents
 5. ~~Additional OAuth providers~~ ✅ **COMPLETED**
 6. ~~Invoice templates & vendor management~~ ✅ **COMPLETED**
-7. User Profile Page
+7. ~~User Profile Page~~ ✅ **COMPLETED**
 8. Settings Page
 9. Custom AI Model Provider Selection
 10. ~~Batch Upload Request Management with Audit Trails~~ ✅ **COMPLETED**
@@ -748,4 +758,4 @@ From CLAUDE.md and codebase analysis:
 
 ---
 
-Last Updated: 2026-01-03 (Updated item #10 Batch Upload Request Management with Audit Trails to ✅ Completed; comprehensive request management system with real-time statistics and audit trails implemented)
+Last Updated: 2026-01-03 (Updated item #7 User Profile Page to ✅ Completed; comprehensive profile management with avatar upload, account statistics, and OAuth provider display implemented)
