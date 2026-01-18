@@ -4,452 +4,284 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Invoice Scanner is a Next.js 15 application that uses AI (OpenAI, Anthropic, Google, etc.) to extract structured data from invoice and receipt PDFs. The app features multi-provider authentication (email/password, Google OAuth, Microsoft Azure AD, Apple Sign-In) with NextAuth.js, multi-user support with data isolation, asynchronous background job processing with BullMQ and Redis, request management with comprehensive audit trails, persistent storage with PostgreSQL/Prisma, multi-format exports (Excel, CSV, JSON), advanced filtering and search, dark mode theming, error handling with retry functionality, vendor management with AI-powered detection, cloud storage with AWS S3, and detailed invoice viewing with loading states.
+Invoice Scanner is a Next.js 15 application that uses AI (OpenAI, Anthropic, Google, etc.) to extract structured data from invoice and receipt PDFs.
 
-## Development Commands
+**Core Features**:
+- Multi-provider AI extraction (OpenAI, Anthropic, Google)
+- Multi-provider authentication (email/password, Google OAuth, Microsoft Azure AD)
+- Asynchronous background job processing (BullMQ + Redis)
+- Request management with comprehensive audit trails
+- Cloud storage (AWS S3) and local filesystem support
+- Multi-format exports (Excel, CSV, JSON)
+- Vendor management with AI-powered detection
+- Advanced filtering, search, and bulk operations
+- Dark mode theming
+- Vision API support for scanned documents with self-contained PDF-to-image converter
+
+**Tech Stack**: Next.js 15, NextAuth.js v5, PostgreSQL/Prisma, BullMQ/Redis, AWS S3, TanStack Table, Radix UI, Tailwind CSS
+
+## Quick Start
+
+### Development Commands
 
 ```bash
-# Install dependencies
+# Installation
 npm install
 
-# Start development server (runs on http://localhost:3000)
-npm run dev
+# Development
+npm run dev              # Start Next.js dev server (http://localhost:3000)
+npm run dev:all          # Start dev server + worker (recommended)
+npm run worker:dev       # Start worker separately
 
-# Start development server + worker process (recommended)
-npm run dev:all
+# Production
+npm run build            # Build application
+npm run build:worker     # Build worker
+npm start                # Start production server
+npm run worker           # Start production worker
 
-# Start worker process separately (for background job processing)
-npm run worker:dev
-
-# Production build
-npm run build
-
-# Build worker for production
-npm run build:worker
-
-# Start production server
-npm start
-
-# Start production worker
-npm run worker
-
-# Run linter
-npm run lint
-
-# Note: No test suite currently configured
-# To add tests, install jest/vitest and add test scripts to package.json
-
-# Database operations
-npx prisma generate          # Regenerate Prisma client after schema changes
-npx prisma migrate dev       # Create and apply migrations (requires CREATEDB permission)
-npx prisma db push           # Push schema without migrations (use if no CREATEDB permission)
-npx prisma migrate reset     # Reset database (WARNING: deletes all data)
-npx prisma studio            # Open Prisma Studio GUI for database inspection
-
-# PostgreSQL-specific commands
-psql -U user -d database -c "\dt"    # List all tables
-psql -U user -d database -c "\di"    # List all indexes
-
-# Redis operations (for background job processing)
-redis-cli ping                       # Check Redis connection
-redis-cli --scan --pattern bull:*    # List BullMQ queues
-redis-cli flushdb                    # Clear Redis database (WARNING: deletes all queues)
+# Tools
+npm run lint             # Run linter
+npx prisma studio        # Open database GUI
+npx prisma generate      # Regenerate Prisma client
+npx prisma migrate dev   # Create and apply migrations
+npx prisma db push       # Push schema without migrations
 ```
 
-## Architecture Overview
+### Database Setup
+
+**PostgreSQL** (recommended for production):
+```bash
+# Set DATABASE_URL in .env.local:
+# postgresql://user:password@localhost:5432/invoice_scanner?schema=public
+
+npx prisma generate
+npx prisma migrate dev --name init  # Requires CREATEDB permission
+# OR
+npx prisma db push                  # If no CREATEDB permission
+
+# Verify
+psql -U user -d database -c "\dt"
+```
+
+**Redis** (required for background jobs):
+```bash
+redis-cli ping                      # Check connection
+redis-cli --scan --pattern bull:*   # List queues
+```
+
+## Architecture
 
 ### Authentication Flow
 
-The application uses NextAuth.js v5 (beta) with multiple authentication providers:
+NextAuth.js v5 with multiple providers:
 
-**Authentication Providers**:
-- **Credentials**: Email/password authentication with bcrypt hashing
-- **Google OAuth**: Sign in with Google (requires GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)
-- **Microsoft Azure AD**: Sign in with Microsoft (requires AZURE_AD_CLIENT_ID, AZURE_AD_CLIENT_SECRET, AZURE_AD_TENANT_ID)
-- **Apple Sign-In**: Sign in with Apple (requires APPLE_ID, APPLE_TEAM_ID, APPLE_KEY_ID, APPLE_PRIVATE_KEY)
-- **Account linking**: Automatically links OAuth accounts to existing email accounts
+**Providers**:
+- **Credentials**: Email/password with bcrypt hashing (10 rounds)
+- **Google OAuth**: Requires `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`
+- **Microsoft Azure AD**: Requires `AZURE_AD_CLIENT_ID`, `AZURE_AD_CLIENT_SECRET`, `AZURE_AD_TENANT_ID`
 
-**Authentication Flow**:
-1. **Signup**: `/api/signup` → validates input with Zod → checks email uniqueness → hashes password with bcrypt → creates user → sends verification email (if SMTP configured)
-2. **Email Verification**: `/api/verify-email` → validates token → marks email as verified
-3. **Login**: `/login` → submits credentials or uses OAuth provider (Google/Microsoft/Apple) → NextAuth validates → generates JWT session → redirects to main app
-4. **Password Reset**: `/api/forgot-password` → generates reset token → sends email → `/api/reset-password` → validates token → updates password
-5. **Session Management**: JWT stored in HTTP-only cookie, session validated on each API request
-6. **Protected Routes**: All API routes check `await auth()` and return 401 if unauthenticated
+**Flow**:
+1. **Signup**: `/api/signup` → validates (Zod) → hashes password → creates user → sends verification email (if SMTP configured)
+2. **Email Verification**: `/api/verify-email` → validates token → marks email verified
+3. **Login**: `/login` → credentials or OAuth → NextAuth validates → JWT session → redirects
+4. **Password Reset**: `/api/forgot-password` → generates token → sends email → `/api/reset-password` → validates → updates password
+5. **Protected Routes**: All API routes call `await auth()` and return 401 if unauthenticated
 
-### Three-Stage Processing Pipeline
+### Processing Pipeline
 
-The application follows a three-stage pipeline for invoice processing:
+Three-stage pipeline for invoice processing:
 
-1. **Upload Stage** (`/api/upload`): Validates auth → saves PDF files to storage (S3 or local) via storage factory → creates database record with `status: "pending"` and `userId`
-2. **AI Processing Stage** (`/api/process`): Validates auth + ownership → queues job with BullMQ (or processes synchronously as fallback) → worker retrieves PDF from storage → extracts text from PDF → sends to OpenAI GPT-4o-mini → parses structured response → saves to database with line items
-3. **Export Stage** (`/api/export`): Validates auth → queries user's invoices with line items → generates Excel/CSV/JSON files
+1. **Upload** (`/api/upload`): Validates auth → saves PDF to storage (S3/local) → creates DB record with `status: "pending"` and `userId`
+2. **AI Processing** (`/api/process`): Validates auth/ownership → queues job (BullMQ) or processes synchronously → extracts text → detects if scanned → **automatic routing**:
+   - **Text-based PDFs**: Normal text extraction with Gemini 2.5 Flash (~$0.0002/page)
+   - **Scanned PDFs**: Native PDF processing with Gemini 2.5 Flash (~$0.0002/page, no image conversion)
+   - Parses response → saves with line items
+3. **Export** (`/api/export`): Validates auth → queries user's invoices → generates Excel/CSV/JSON
 
-### Background Job Processing Architecture
+### Background Job Processing
 
-The application uses **BullMQ with Redis** for asynchronous invoice processing, with graceful fallback to synchronous processing.
+**BullMQ with Redis** for asynchronous processing:
 
-**Three Operational Modes**:
-- **Separate Worker** (`WORKER_MODE=separate`, default): Dedicated worker process for scalability, ideal for production
-- **Embedded Worker** (`WORKER_MODE=embedded`): Worker runs within Next.js process, suitable for single-server deployments
-- **Synchronous Fallback** (`WORKER_MODE=disabled`): Direct processing without queue, used when Redis unavailable
+**Operational Modes**:
+- `WORKER_MODE=separate` (default): Dedicated worker process for scalability
+- `WORKER_MODE=embedded`: Worker runs within Next.js process
+- `WORKER_MODE=disabled`: Synchronous processing (Redis unavailable)
 
-**Job Processing Flow**:
-1. `/api/process` endpoint dispatches job to BullMQ queue (status: `queued`)
-2. Worker process picks up job and begins processing (status: `processing`)
-3. Worker extracts PDF text, calls OpenAI API, validates response with Zod
-4. Worker saves results to database (status: `processed` or `failed`)
-5. Frontend polls `/api/invoices/status` every 10-20 seconds for real-time updates
-6. Failed jobs automatically retry with exponential backoff (3 attempts)
+**Job Flow**:
+1. `/api/process` dispatches job to queue (`status: "queued"`)
+2. Worker picks up job (`status: "processing"`)
+3. Worker extracts text, calls AI, validates (Zod)
+4. Worker saves results (`status: "processed"` or `"failed"`)
+5. Frontend polls `/api/invoices/status` every 10-20 seconds
+6. Failed jobs retry with exponential backoff (3 attempts)
 
-**Worker Configuration**:
-- **Concurrency**: 5 jobs processed simultaneously per worker
-- **Timeout**: 2 minutes per job (configurable via `JOB_TIMEOUT`)
-- **Retry Strategy**: Exponential backoff starting at 5 seconds
-- **Lazy Loading**: OpenAI client loaded only when needed for worker compatibility
+**Configuration**:
+- Concurrency: 5 jobs per worker
+- Timeout: 2 minutes (configurable via `JOB_TIMEOUT`)
+- Retry: Exponential backoff starting at 5 seconds
 
-**Deployment Modes**:
-- **Self-hosted**: Run separate worker with `npm run worker:dev` or `npm run dev:all`
-- **Serverless** (Vercel): Use Upstash Redis + embedded worker mode or serverless functions
-- **Docker**: Separate containers for Next.js app and worker process
+### Cloud Storage (Strategy Pattern)
 
-### Cloud Storage Architecture (Strategy Pattern)
+Flexible file storage abstraction:
 
-The application implements a **Storage Strategy Pattern** for flexible file storage:
-
-**Storage Abstraction Layer**:
-- `StorageStrategy` interface defines contract: `upload()`, `download()`, `delete()`, `getUrl()`
-- `LocalStorage` implementation for filesystem storage in `public/uploads/`
-- `S3Storage` implementation for AWS S3 cloud storage with presigned URLs
-- `StorageFactory` selects provider based on `STORAGE_PROVIDER` env var and file URL prefix
-
-**Hybrid Support**:
-- System transparently handles both local files (`/uploads/...`) and S3 files (`s3://...`)
-- Existing local files continue working after S3 migration
-- User isolation in S3: `users/{userId}/invoices/{filename}`
-- Presigned URLs (1-hour expiry) for secure S3 downloads via `/api/invoices/download`
+**Storage Providers**:
+- `LocalStorage`: Filesystem storage in `public/uploads/`
+- `S3Storage`: AWS S3 with presigned URLs (1-hour expiry)
+- `StorageFactory`: Selects provider based on `STORAGE_PROVIDER` env var and file URL prefix
 
 **File URL Convention**:
-- Local files: `/uploads/filename.pdf` (relative path from `public/`)
-- S3 files: `s3://bucket/users/{userId}/invoices/filename.pdf` (full S3 URI stored in DB)
-- Storage factory detects provider from URL prefix
+- Local: `/uploads/filename.pdf` (relative path)
+- S3: `s3://bucket/users/{userId}/invoices/filename.pdf` (full URI)
 
-### Request Management with Audit Trails
+**Hybrid Support**: System transparently handles both local and S3 files, enabling zero-downtime migration.
 
-The application features a comprehensive **Request Management System** that groups invoice uploads into logical batches with full audit trail tracking for compliance and debugging.
+### Request Management
+
+Groups invoice uploads into logical batches with audit trails:
 
 **Request Lifecycle**:
-- `draft` - Created, files can be added/removed, not yet submitted
-- `processing` - At least one invoice queued or actively processing
+- `draft` - Files can be added/removed, not yet submitted
+- `processing` - At least one invoice queued or processing
 - `completed` - All invoices successfully processed
-- `partial` - Some processed, some failed (manual intervention needed)
-- `failed` - All invoices failed processing
+- `partial` - Some processed, some failed
+- `failed` - All invoices failed
 
-**Hybrid Request Creation**:
-- **Auto-created**: Upload endpoint automatically creates requests with title like "Batch 2026-01-02 14:30"
-- **Manual**: Users can create named requests (e.g., "December 2025 Expenses") via UI
-- **Backward Compatible**: Existing invoices with `requestId: null` remain valid ("orphaned" invoices)
-
-**Audit Trail Features**:
-- Tracks all operations: request lifecycle, invoice operations, vendor operations, user actions
+**Audit Trail**:
+- Tracks all operations: request lifecycle, invoice operations, vendor operations
 - Records IP address and user agent for forensic analysis
 - Stores before/after values for data changes
 - Severity levels: info, warning, error
-- Organized by event categories for filtering and reporting
 - Non-blocking: audit failures don't break primary operations
 
-**Statistics Tracking**:
-- Real-time metrics: totalInvoices, processedCount, failedCount, pendingCount, queuedCount, processingCount
+**Statistics**:
+- Real-time metrics: totalInvoices, processedCount, failedCount, etc.
 - Financial data: totalAmount, averageAmount (by currency)
-- Performance metrics: averageProcessingTime (milliseconds)
-- Success rate calculation: processed / total * 100
+- Performance: averageProcessingTime (milliseconds)
 
-**Request APIs**:
-- `/api/requests` - Create request, list with filtering/pagination
-- `/api/requests/[requestId]` - Get, update, delete individual request
-- `/api/requests/[requestId]/files` - Add/remove invoices from request
-- `/api/requests/[requestId]/submit` - Submit all pending invoices for AI processing
-- `/api/requests/[requestId]/retry` - Retry all failed invoices
-- `/api/requests/[requestId]/stats` - Get comprehensive statistics
-- `/api/requests/[requestId]/audit` - Get filtered audit logs with pagination
-- `/api/requests/[requestId]/timeline` - Get chronological event timeline
-- `/api/requests/bulk-delete` - Delete multiple requests at once
-- `/api/requests/bulk-export` - Export multiple requests to JSON/CSV
-- `/api/audit` - Global audit log viewing with advanced filtering
+### AI Extraction & Vision API
 
-**Frontend Components**:
-- `/requests` - Request list page with search, filters, bulk operations
-- `/requests/[requestId]` - Detail page with tabs: Invoices, Timeline, Audit Trail
-- Real-time statistics dashboard with progress bars
-- Visual timeline grouped by date
-- Bulk selection and operations (export, delete)
+**AI Provider Architecture** (Strategy Pattern):
+- `AIProvider` abstract base class
+- Implementations: `OpenAIProvider`, `DeepSeekProvider`, `OpenRouterProvider`
+- `AIProviderFactory` instantiates provider based on configuration
+- `ModelSelector` determines effective config (Vendor Override > User Config > System Default)
 
-### Data Flow
+**Vendor Detection** (three strategies):
+1. Identifier Matching (fast, free): Tax IDs, Company Registration numbers
+2. AI Detection (accurate): GPT-4o-mini analyzes invoice text
+3. Fuzzy Matching (fallback): Partial string matching
 
-```
-User signup/login → NextAuth → JWT session cookie → Authenticated requests
-User uploads PDF → FileUpload component → /api/upload (auth check) → Saves to disk + DB with userId
-User clicks "Process" → /api/process (auth + ownership check) → extractTextFromPDF() → extractInvoiceData() → Updates DB
-User exports data → ExportButtons → /api/export?format=X (auth check) → Generates file with user's invoices only
-```
+**Vendor Templates**:
+- Custom prompts for AI extraction
+- Custom fields beyond standard invoice fields
+- Field mappings and validation rules
 
-### Key Libraries & Their Roles
+**Vision API Integration**:
+- Self-contained PDF-to-image converter using `pdf-to-png-converter`
+- Zero external dependencies (no Cloudinary required)
+- Server-side rendering, no network round-trips
+- Free PDF conversion (only pay for OpenAI Vision API usage)
+- Manual trigger via UI for scanned/poor-quality PDFs
+- Automatic detection using text density heuristics
 
-- **NextAuth.js v5**: Authentication with multiple providers (Credentials, Google, Microsoft, Apple), JWT sessions
-- **BullMQ**: Job queue for asynchronous invoice processing with retry logic
-- **ioredis**: Redis client for job queue and caching
-- **bcryptjs**: Password hashing (10 rounds)
-- **nodemailer**: Email sending for verification and password reset (SMTP)
-- **pdfreader**: Extracts raw text from PDF files (page by page)
-- **OpenAI API**: GPT-4o-mini with JSON mode for structured data extraction
-- **Zod**: Validates AI responses and user input before saving
-- **Prisma**: ORM with PostgreSQL database (SQLite supported for local development)
-- **AWS SDK**: S3 client for cloud storage with presigned URLs
-- **xlsx**: Excel export with multi-sheet support
-- **csv-writer**: CSV export
-- **TanStack Table**: Frontend data table with sorting, filtering, selection
-- **next-themes**: Dark mode support with system theme detection
-- **Radix UI**: Accessible dialog, alert-dialog, select, checkbox, tabs components
-
-### Directory Structure
-
-```
-src/
-├── app/
-│   ├── api/
-│   │   ├── auth/[...nextauth]/route.ts  # NextAuth handlers (GET, POST)
-│   │   ├── signup/route.ts              # User registration endpoint
-│   │   ├── verify-email/route.ts        # Email verification endpoint
-│   │   ├── forgot-password/route.ts     # Password reset request endpoint
-│   │   ├── reset-password/route.ts      # Password reset confirmation endpoint
-│   │   ├── upload/route.ts              # File upload → disk + DB (auth required)
-│   │   ├── process/route.ts             # PDF text extraction → AI → DB update (auth + ownership)
-│   │   ├── invoices/
-│   │   │   ├── route.ts                 # GET user's invoices, DELETE by ID (auth required)
-│   │   │   ├── bulk-delete/route.ts     # Bulk delete endpoint (auth required)
-│   │   │   └── bulk-assign-vendor/route.ts  # Bulk vendor assignment (auth required)
-│   │   ├── vendors/
-│   │   │   ├── route.ts                 # CRUD operations for vendors
-│   │   │   ├── [vendorId]/route.ts      # Individual vendor operations
-│   │   │   └── [vendorId]/templates/    # Vendor template management
-│   │   ├── requests/
-│   │   │   ├── route.ts                 # Create request, list with filtering (auth required)
-│   │   │   ├── [requestId]/
-│   │   │   │   ├── route.ts             # Get, update, delete request (auth + ownership)
-│   │   │   │   ├── files/route.ts       # Add/remove invoices from request
-│   │   │   │   ├── submit/route.ts      # Submit request for processing
-│   │   │   │   ├── retry/route.ts       # Retry failed invoices
-│   │   │   │   ├── stats/route.ts       # Get request statistics
-│   │   │   │   ├── audit/route.ts       # Get request audit logs
-│   │   │   │   └── timeline/route.ts    # Get request timeline
-│   │   │   ├── bulk-delete/route.ts     # Bulk delete requests
-│   │   │   └── bulk-export/route.ts     # Bulk export requests to JSON/CSV
-│   │   ├── audit/route.ts       # Global audit log viewing (auth required)
-│   │   └── export/
-│   │       ├── route.ts                 # Generate Excel/CSV/JSON exports (auth required)
-│   │       └── bulk/route.ts            # Bulk export for selected invoices (auth required)
-│   ├── login/page.tsx           # Login/signup page with Google OAuth (client component)
-│   ├── verify-email/page.tsx    # Email verification page
-│   ├── forgot-password/page.tsx # Password reset request page
-│   ├── reset-password/page.tsx  # Password reset confirmation page
-│   ├── vendors/page.tsx         # Vendor management page
-│   ├── requests/
-│   │   ├── page.tsx             # Request list page with search, filters, bulk operations
-│   │   └── [requestId]/page.tsx # Request detail page with tabs (Invoices, Timeline, Audit Trail)
-│   ├── page.tsx                 # Main UI (client component, protected)
-│   └── layout.tsx               # Root layout with SessionProvider
-├── components/
-│   ├── FileUpload.tsx           # Drag-and-drop PDF uploader (react-dropzone)
-│   ├── FileProgressList.tsx     # Upload progress tracking for multiple files
-│   ├── ProcessingProgress.tsx   # Real-time processing progress indicator
-│   ├── InvoiceTable.tsx         # Data table with view/delete/retry actions, row selection
-│   ├── InvoiceDetailDialog.tsx  # Full invoice detail modal with line items and errors
-│   ├── InvoiceFilters.tsx       # Search and filter UI (status, currency, date, amount)
-│   ├── BulkActionsToolbar.tsx   # Bulk operations toolbar (export, delete, retry)
-│   ├── BulkVendorAssignment.tsx # Bulk vendor assignment UI
-│   ├── ExportButtons.tsx        # Export action buttons
-│   ├── sidebar.tsx              # Application sidebar navigation
-│   ├── app-shell.tsx            # App shell wrapper for sidebar layout
-│   ├── session-provider.tsx     # NextAuth SessionProvider wrapper
-│   ├── theme-provider.tsx       # next-themes provider wrapper
-│   ├── theme-toggle.tsx         # Dark/light mode toggle button
-│   ├── vendors/                 # Vendor management components
-│   │   ├── VendorTable.tsx
-│   │   ├── CreateVendorDialog.tsx
-│   │   ├── VendorDetailDialog.tsx
-│   │   └── TemplateEditor.tsx
-│   ├── requests/                # Request management components
-│   │   ├── RequestTable.tsx              # Request list table with selection
-│   │   ├── RequestFilters.tsx            # Search and status filtering
-│   │   ├── CreateRequestDialog.tsx       # Create new request dialog
-│   │   ├── RequestStatusBadge.tsx        # Visual status indicators
-│   │   ├── RequestDetailCard.tsx         # Request metadata card
-│   │   ├── RequestStatistics.tsx         # Statistics dashboard with progress bars
-│   │   ├── AuditTrail.tsx                # Detailed audit log viewer
-│   │   └── RequestTimeline.tsx           # Visual event timeline
-│   └── ui/                      # shadcn/ui components (button, dialog, skeleton, select, checkbox, etc.)
-├── lib/
-│   ├── auth.ts                  # NextAuth configuration (Credentials + Google/Microsoft/Apple OAuth, JWT)
-│   ├── ai/
-│   │   ├── extractor.ts         # OpenAI GPT-4o-mini extraction logic (lazy-loaded)
-│   │   ├── vendor-detector.ts   # Vendor detection from invoice text
-│   │   ├── schema-builder.ts    # Dynamic schema generation for custom fields
-│   │   └── field-mapper.ts      # Field mapping and validation
-│   ├── pdf/parser.ts            # PDF text extraction (pdfreader)
-│   ├── queue/                   # Background job processing (BullMQ)
-│   │   ├── redis-client.ts      # Redis connection singleton
-│   │   └── invoice-queue.ts     # BullMQ queue manager
-│   ├── storage/                 # Storage abstraction layer (Strategy Pattern)
-│   │   ├── storage-strategy.ts  # StorageStrategy interface definition
-│   │   ├── local-storage.ts     # Local filesystem implementation
-│   │   ├── s3-storage.ts        # AWS S3 implementation with presigned URLs
-│   │   ├── s3-client.ts         # S3 client singleton
-│   │   ├── storage-factory.ts   # Factory to select storage provider
-│   │   └── index.ts             # Public exports
-│   ├── export/                  # Excel, CSV, JSON generators
-│   ├── email/                   # Email sending (nodemailer) and templates
-│   ├── requests/                # Request management utilities
-│   │   ├── status-calculator.ts # Request status calculation logic
-│   │   └── statistics.ts        # Statistics calculation and formatting
-│   ├── audit/                   # Audit logging system
-│   │   ├── logger.ts            # Core audit logging functions
-│   │   └── middleware.ts        # Request metadata extraction (IP, user agent)
-│   └── db/prisma.ts             # Prisma client singleton
-├── workers/                     # Background worker processes
-│   ├── invoice-processor.ts     # BullMQ worker entry point
-│   └── processor-logic.ts       # Core processing logic (shared with legacy processor)
-├── hooks/
-│   └── useInvoicePolling.ts     # Frontend polling hook for job status updates
-└── types/
-    ├── invoice.ts               # Zod schemas + TypeScript types for invoices
-    ├── vendor.ts                # Zod schemas + TypeScript types for vendors
-    ├── request.ts               # Zod schemas + TypeScript types for requests
-    ├── audit.ts                 # Zod schemas + TypeScript types for audit logs
-    └── queue.ts                 # BullMQ job data types and interfaces
-```
+**Extraction Prompt**: Instructs GPT-4 to return JSON with `invoiceNumber`, `date` (ISO 8601), `totalAmount`, `currency`, `lineItems[]`. Uses `null` for missing fields.
 
 ## Database Schema
 
-### User Model (Authentication)
-- Primary entity for user accounts
-- `email`: Unique identifier for login
-- `password`: Hashed with bcryptjs (10 rounds), nullable for OAuth-only accounts
-- `emailVerified`: Timestamp of email verification (null until verified)
-- One-to-many relationships: invoices, accounts (OAuth), sessions, vendors, uploadRequests, auditLogs
-- All user data cascades on delete
+### Core Models
 
-### UploadRequest Model (Request Management)
-- Groups invoice uploads into logical batches for workflow organization
-- `title`: Request name (auto-generated like "Batch 2026-01-02 14:30" or user-provided)
-- `status`: Request lifecycle state (draft, processing, completed, partial, failed)
-- `defaultVendorId`: Optional vendor to apply to all invoices in request
-- `autoProcess`: Flag for automatic processing when invoices are uploaded
-- **Cached Statistics**: totalInvoices, processedCount, failedCount, pendingCount, queuedCount, processingCount, totalAmount, currency
-- **Performance Metrics**: submittedAt, completedAt timestamps for analytics
-- Indexes on `userId`, `status`, `createdAt`, `submittedAt` for efficient querying
-- One-to-many relationships: invoices, auditLogs
-- Deletion behavior: When deleted, invoices become "orphaned" (requestId set to null via onDelete: SetNull)
+**User**: Authentication entity
+- `email`: Unique identifier
+- `password`: Bcrypt hashed (nullable for OAuth-only)
+- `emailVerified`: Verification timestamp
+- Relationships: invoices, accounts, sessions, vendors, uploadRequests, auditLogs
 
-### AuditLog Model (Compliance & Debugging)
-- Comprehensive audit trail for all system operations
+**UploadRequest**: Batch grouping for invoices
+- `title`: Request name (auto-generated or user-provided)
+- `status`: Lifecycle state (draft, processing, completed, partial, failed)
+- `defaultVendorId`: Optional vendor for all invoices
+- Cached statistics: totalInvoices, processedCount, failedCount, etc.
+- Relationships: invoices, auditLogs
+
+**Invoice**: Primary entity
+- `userId`: Ensures user isolation
+- `requestId`: Links to UploadRequest (nullable, onDelete: SetNull)
+- `status`: "pending" → "processing" → "processed"/"failed"
+- `rawText`: Full PDF text (pdfreader)
+- `aiResponse`: Raw JSON from AI OR error details
+- `fileUrl`: Local path or S3 URI
+- `vendorId`, `detectedVendorId`, `templateId`: Vendor integration
+- `jobId`, `processingStartedAt`, `retryCount`: Background job tracking
+- Relationships: lineItems
+
+**LineItem**: Invoice line items
+- `invoiceId`: Parent invoice
+- `order`: Display sequence
+- Fields: description (required), quantity, unitPrice, amount (nullable)
+
+**Vendor**: Vendor information
+- `identifiers`: JSON array (Tax ID, Company Registration, etc.)
+- Relationships: templates, invoices
+
+**VendorTemplate**: Custom extraction templates
+- `customPrompt`: Additional AI instructions
+- `customFields`, `fieldMappings`, `validationRules`: JSON configs
+- `isActive`: Only active templates used
+- Usage stats: `invoiceCount`, `lastUsedAt`
+
+**AuditLog**: Comprehensive audit trail
 - `eventType`: Specific action (request_created, invoice_uploaded, etc.)
-- `eventCategory`: Grouping (request_lifecycle, invoice_operation, vendor_operation, user_action)
-- `severity`: Event importance level (info, warning, error)
-- `summary`: Human-readable description of the event
-- `details`: JSON field with additional context
-- **Change Tracking**: previousValue, newValue (JSON snapshots for before/after comparison)
-- **Forensic Data**: ipAddress, userAgent for security and troubleshooting
-- `targetType` and `targetId`: Links events to specific resources (request, invoice, vendor)
-- Indexes on `requestId`, `userId`, `eventType`, `eventCategory`, `createdAt`, composite `(targetType, targetId)`
-- Append-only design: No updates or deletes via API (cascade delete with request/user)
+- `eventCategory`: Grouping (request_lifecycle, invoice_operation, etc.)
+- `severity`: info, warning, error
+- Change tracking: `previousValue`, `newValue`
+- Forensic data: `ipAddress`, `userAgent`
+- `targetType`, `targetId`: Links to resources
+- Append-only: No updates/deletes via API
 
-### Invoice Model
-- Primary entity with one-to-many relationship to LineItem
-- **User Isolation**: `userId` foreign key ensures each invoice belongs to one user
-- **Request Association**: `requestId` links invoice to UploadRequest (nullable, onDelete: SetNull creates "orphaned" invoices)
-- `status` field: "pending" → "processing" → "processed" or "failed"
-- `rawText`: Full PDF text extracted by pdfreader
-- `aiResponse`: Raw JSON response from OpenAI OR error details (stored as string)
-- `fileUrl`: Can be local path (`/uploads/...`) or S3 URI (`s3://...`)
-- **Vendor Integration**: `vendorId` links to vendor, `detectedVendorId` stores auto-detection result, `templateId` stores template used, `customData` stores custom field values
-- **Background Job Tracking**: jobId (BullMQ), processingStartedAt, processingCompletedAt, retryCount, lastError
-- Indexes on `userId`, `status`, `date`, `vendorId`, `jobId`, `requestId` for query performance
+### NextAuth Models
 
-### LineItem Model
-- Child entity linked via `invoiceId` (cascade delete enabled)
-- `order`: Display sequence for line items
-- All fields except `description` are nullable (some invoices lack detailed breakdowns)
+- **Account**: OAuth provider tokens
+- **Session**: JWT sessions (no DB sessions)
+- **VerificationToken**: Email verification
+- **PasswordResetToken**: Password reset
 
-### Vendor Model
-- Stores vendor information for each user
-- `identifiers`: JSON array of unique identifiers (Tax ID, Company Registration, etc.)
-- One-to-many relationships: templates, invoices
-- Indexes on `userId` and `name`
+## Configuration
 
-### VendorTemplate Model
-- Stores custom extraction templates for vendors
-- `customPrompt`: Additional AI instructions for this vendor
-- `customFields`: JSON array of custom field definitions
-- `fieldMappings`: JSON object mapping AI response fields to custom fields
-- `validationRules`: JSON array of validation rules
-- `isActive`: Only active templates are used for processing
-- Tracks usage stats: `invoiceCount`, `lastUsedAt`
+### Required Environment Variables
 
-### Account & Session Models (NextAuth)
-- Standard NextAuth schema for OAuth providers and JWT sessions
-- Account: Stores OAuth provider tokens (Google, etc.)
-- Session: JWT-based sessions (no database sessions used)
-
-### VerificationToken Model
-- Stores email verification tokens
-- Unique `token` field with expiration timestamp
-- Used for email verification after signup
-
-### PasswordResetToken Model
-- Stores password reset tokens
-- Links to user via `email` field
-- Unique `token` field with expiration timestamp
-- Automatically cleaned up after use or expiration
-
-## Environment Variables
-
-Required in `.env.local`:
 ```env
-# OpenAI Configuration (Required)
-OPENAI_API_KEY=sk-...                                    # OpenAI API key (required for AI extraction)
-
-# Alternative AI Providers (Optional)
-ANTHROPIC_API_KEY=sk-ant-...                             # Anthropic API key
-GOOGLE_AI_API_KEY=...                                    # Google Gemini API key
-# DeepSeek/OpenRouter keys can be set via generic config or specific vars if implemented
+# OpenAI (Required)
+OPENAI_API_KEY=sk-...
 
 # Database (Required)
-# For PostgreSQL (Production):
 DATABASE_URL="postgresql://user:password@localhost:5432/invoice_scanner?schema=public"
-# For SQLite (Development only):
-# DATABASE_URL="file:./dev.db"
 NODE_ENV=development
 
 # NextAuth (Required)
-AUTH_SECRET=<generated-secret>                           # NextAuth secret (generate with: openssl rand -base64 32)
-NEXTAUTH_URL=http://localhost:3000                       # Base URL for callbacks
+AUTH_SECRET=<openssl rand -base64 32>
+NEXTAUTH_URL=http://localhost:3000
 
-# Google OAuth (Optional - for Google sign-in)
-GOOGLE_CLIENT_ID=your_google_client_id_here
-GOOGLE_CLIENT_SECRET=your_google_client_secret_here
+# Redis (Required for background jobs)
+REDIS_URL=redis://localhost:6379
+```
 
-# Microsoft Azure AD OAuth (Optional - for Microsoft sign-in)
-AZURE_AD_CLIENT_ID=your_application_client_id_here
-AZURE_AD_CLIENT_SECRET=your_client_secret_value_here
-AZURE_AD_TENANT_ID=common                            # Use 'common' for multi-tenant support
+### Optional Environment Variables
 
-# Apple Sign-In (Optional - for Apple sign-in)
-APPLE_ID=com.yourdomain.invoice-scanner.signin
-APPLE_TEAM_ID=your_team_id_here
-APPLE_KEY_ID=your_key_id_here
-APPLE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nYour_private_key_content_here\n-----END PRIVATE KEY-----"
+```env
+# Alternative AI Providers
+ANTHROPIC_API_KEY=sk-ant-...
+GOOGLE_AI_API_KEY=...
 
-# Email/SMTP (Optional - for email verification and password reset)
+# Google OAuth
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+
+# Microsoft Azure AD OAuth
+AZURE_AD_CLIENT_ID=...
+AZURE_AD_CLIENT_SECRET=...
+AZURE_AD_TENANT_ID=common  # For multi-tenant
+
+# Email/SMTP (for verification and password reset)
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_SECURE=false
@@ -458,230 +290,85 @@ SMTP_PASSWORD=your_app_password
 SMTP_FROM_NAME="Invoice Scanner"
 SMTP_FROM_EMAIL=your_email@gmail.com
 
-# AWS S3 Cloud Storage (Optional - for production file storage)
+# AWS S3 Cloud Storage
 AWS_REGION=us-east-1
-AWS_ACCESS_KEY_ID=your_access_key_id_here
-AWS_SECRET_ACCESS_KEY=your_secret_access_key_here
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=...
 AWS_S3_BUCKET_NAME=invoice-scanner-files
-S3_PRESIGNED_URL_EXPIRY=3600                     # Presigned URL expiration in seconds (default: 1 hour)
-STORAGE_PROVIDER=s3                              # Use 's3' for cloud storage, 'local' for filesystem
-
-# Redis Configuration (Required for background jobs)
-REDIS_URL=redis://localhost:6379                 # Redis connection string (use Upstash for serverless)
+S3_PRESIGNED_URL_EXPIRY=3600
+STORAGE_PROVIDER=s3  # Or 'local'
 
 # Background Job Configuration
-WORKER_MODE=separate                             # 'separate', 'embedded', or 'disabled'
-QUEUE_NAME=invoice-processing                    # Job queue name
-JOB_ATTEMPTS=3                                   # Max retry attempts
-JOB_BACKOFF_TYPE=exponential                     # Backoff strategy
-JOB_BACKOFF_DELAY=5000                          # Initial delay in ms
-JOB_TIMEOUT=120000                              # Job timeout (2 minutes)
-WORKER_CONCURRENCY=5                             # Concurrent jobs per worker
-NEXT_PUBLIC_POLLING_INTERVAL=10000              # Frontend polling interval (10 seconds)
+WORKER_MODE=separate  # Or 'embedded', 'disabled'
+QUEUE_NAME=invoice-processing
+JOB_ATTEMPTS=3
+JOB_BACKOFF_TYPE=exponential
+JOB_BACKOFF_DELAY=5000
+JOB_TIMEOUT=120000
+WORKER_CONCURRENCY=5
+NEXT_PUBLIC_POLLING_INTERVAL=10000
 ```
 
-**Important**: After adding/changing `.env.local`, restart the dev server.
+### Setup Guides
 
-### Generating AUTH_SECRET
-```bash
-openssl rand -base64 32
-```
-
-### Google OAuth Setup (Optional)
-To enable "Sign in with Google":
+**Google OAuth**:
 1. Go to [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
-2. Create a new project or select existing one
-3. Enable "Google+ API"
-4. Go to "Credentials" → "Create Credentials" → "OAuth 2.0 Client ID"
-5. Configure OAuth consent screen if needed
-6. Application type: "Web application"
-7. Add authorized redirect URIs:
-   - Development: `http://localhost:3000/api/auth/callback/google`
-   - Production: `https://yourdomain.com/api/auth/callback/google`
-8. Copy the Client ID and Client Secret to `.env.local`
+2. Create OAuth 2.0 Client ID (Web application)
+3. Add redirect URIs: `http://localhost:3000/api/auth/callback/google` (dev), `https://yourdomain.com/api/auth/callback/google` (prod)
+4. Copy Client ID and Secret to `.env.local`
 
-### Email/SMTP Configuration (Optional)
-For email verification and password reset functionality:
-- **Gmail**: Use an [App Password](https://support.google.com/accounts/answer/185833) instead of your regular password
-- **Other providers**: Use your SMTP server credentials
-- **Development**: If SMTP is not configured, emails will be logged to console instead of sent
-- Email features gracefully degrade when SMTP is not configured
+**Email/SMTP**:
+- Gmail: Use [App Password](https://support.google.com/accounts/answer/185833)
+- Other providers: Use SMTP credentials
+- If not configured, emails log to console
 
-### AWS S3 Cloud Storage Setup (Optional)
-For production file storage instead of local filesystem:
-1. Go to [AWS Console → S3](https://console.aws.amazon.com/s3) and create bucket
-2. Bucket settings: Block all public access ✅, Server-side encryption (AES256) ✅
-3. Go to [AWS Console → IAM](https://console.aws.amazon.com/iam) and create user with programmatic access
-4. Attach custom policy with `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject`, `s3:HeadObject`, `s3:ListBucket` permissions
-5. Add AWS credentials to `.env.local` (see above)
-6. Set `STORAGE_PROVIDER=s3` to enable S3 storage
-7. **Migration**: Existing local files continue working; new uploads go to S3
-8. See `.env.example` for detailed AWS configuration and IAM policy example
+**AWS S3**:
+1. Create S3 bucket with Block Public Access ✅ and AES256 encryption ✅
+2. Create IAM user with permissions: `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject`, `s3:HeadObject`, `s3:ListBucket`
+3. Add credentials to `.env.local`
+4. Set `STORAGE_PROVIDER=s3`
+5. Existing local files continue working; new uploads go to S3
 
-## AI Extraction Logic
+## Development Patterns
 
-### AI Provider Architecture
-- **Strategy Pattern**: `AIProvider` abstract base class defines the contract for all providers.
-- **Implementations**:
-  - `OpenAIProvider`: Handles OpenAI models (GPT-4o, etc.)
-  - `DeepSeekProvider` / `OpenRouterProvider`: Extend generic `OpenAICompatibleProvider`
-  - Future: Anthropic, Google implementations
-- **Factory**: `AIProviderFactory` instantiates the correct provider based on configuration.
-- **Model Selection**: `ModelSelector` determines the effective configuration (Vendor Override > User Config > System Default).
-- **Configuration**: Managed via `AIModelConfig` model and `/api/ai-config` endpoint.
+### File Storage
 
-### Vendor Detection
-Three-strategy approach for automatic vendor detection:
-1. **Identifier Matching** (fast, free): Matches Tax IDs, Company Registration numbers
-2. **AI Detection** (accurate, low cost): Uses GPT-4o-mini to analyze invoice text
-3. **Fuzzy Matching** (fallback): Partial string matching on vendor name
-
-### Vendor Templates
-Templates allow per-vendor customization:
-- **Custom Prompts**: Additional instructions for AI extraction
-- **Custom Fields**: Define vendor-specific fields beyond standard invoice fields
-- **Field Mappings**: Map AI response fields to database fields
-- **Validation Rules**: Enforce business rules (min/max values, required fields, etc.)
-
-### Extraction Prompt Structure
-The prompt (src/lib/ai/extractor.ts:10-40) instructs GPT-4 to:
-- Return JSON with fields: invoiceNumber, date (ISO 8601), totalAmount, currency, lineItems
-- Use `null` for missing fields (not empty strings)
-- Parse amounts as numbers without currency symbols
-- Extract all line items with description/quantity/unitPrice/amount
-- If vendor template exists, include custom fields and follow custom prompt instructions
-
-### Fallback Strategy
-`extractInvoiceDataWithFallback()` is a stub for future GPT-4 Vision integration to handle scanned/image-based PDFs. Currently, it just calls text extraction.
-
-## Path Aliases
-
-The project uses TypeScript path aliases:
-- `@/*` → `./src/*`
-
-Example: `import { prisma } from "@/lib/db/prisma"`
-
-## Common Development Patterns
-
-### Working with File Storage
-
-**To upload a file**:
 ```typescript
-import { StorageFactory } from "@/lib/storage";
+import { getDefaultStorage, getStorageForFile } from "@/lib/storage";
 
-const storage = StorageFactory.getStorage();
-const fileUrl = await storage.upload(file, userId);
-// fileUrl will be "/uploads/..." for local or "s3://bucket/..." for S3
-```
+// Upload
+const storage = getDefaultStorage();
+const fileUrl = await storage.upload(buffer, userId);
 
-**To download a file**:
-```typescript
-import { StorageFactory } from "@/lib/storage";
-
-const storage = StorageFactory.getStorage(invoice.fileUrl);
+// Download
+const storage = getStorageForFile(invoice.fileUrl);
 const buffer = await storage.download(invoice.fileUrl);
-// For S3 files, use getUrl() to get presigned URL instead:
-const url = await storage.getUrl(invoice.fileUrl);
-```
+// For S3: const url = await storage.getUrl(invoice.fileUrl);
 
-**To delete a file**:
-```typescript
-import { StorageFactory } from "@/lib/storage";
-
-const storage = StorageFactory.getStorage(invoice.fileUrl);
+// Delete
 await storage.delete(invoice.fileUrl);
 ```
 
-**Storage factory automatically selects the correct provider** based on:
-1. File URL prefix (local: `/uploads/...`, S3: `s3://...`)
-2. `STORAGE_PROVIDER` environment variable for new uploads
+Storage factory auto-selects provider based on:
+1. File URL prefix (local: `/uploads/`, S3: `s3://`)
+2. `STORAGE_PROVIDER` env var for new uploads
 
-### Adding a New Export Format
-1. Create `src/lib/export/newformat.ts` with a function that takes invoices and returns a file buffer
-2. Add the format to `ExportOptions.format` union type in `src/types/invoice.ts`
-3. Update `src/app/api/export/route.ts` to handle the new format in the switch statement
-4. Add a button to `src/components/ExportButtons.tsx`
+### Adding Export Formats
 
-### Modifying AI Extraction Schema
-1. Update Zod schemas in `src/types/invoice.ts` (ExtractedInvoiceSchema or LineItemSchema)
-2. Update the prompt in `src/lib/ai/extractor.ts` (EXTRACTION_PROMPT) to match new schema
-3. Update database schema in `prisma/schema.prisma` if adding persistent fields
-4. Run `npx prisma migrate dev --name descriptive_name` to create and apply migration
-5. Prisma client regenerates automatically after migration
+1. Create `src/lib/export/newformat.ts` with export function
+2. Add format to `ExportOptions.format` in `src/types/invoice.ts`
+3. Update `src/app/api/export/route.ts` switch statement
+4. Add button to `src/components/ExportButtons.tsx`
 
-### Adding Authentication to a New API Route
-1. Import `auth` from `@/lib/auth`
-2. Call `const session = await auth()` at the start of the route handler
-3. Return 401 if `!session?.user?.id`
-4. Filter database queries by `userId: session.user.id`
-5. Verify ownership before modifying resources (return 403 if not owner)
+### Modifying AI Schema
 
-### Working with Prisma
+1. Update Zod schemas in `src/types/invoice.ts`
+2. Update prompt in `src/lib/ai/extractor.ts`
+3. Update `prisma/schema.prisma` if adding persistent fields
+4. Run `npx prisma migrate dev --name descriptive_name`
 
-**Database Configuration**:
-- **Production**: PostgreSQL (recommended for production deployments)
-- **Development**: SQLite or PostgreSQL (switch provider in `prisma/schema.prisma`)
+### Protected API Routes
 
-**PostgreSQL Connection String Format**:
-```
-postgresql://USER:PASSWORD@HOST:PORT/DATABASE?schema=SCHEMA
-```
-
-After schema changes in `prisma/schema.prisma`:
-```bash
-npx prisma migrate dev --name descriptive_name  # Creates migration + applies it
-npx prisma generate                              # Regenerates TypeScript types
-```
-
-**Setting up a new PostgreSQL database**:
-```bash
-# First, ensure your DATABASE_URL is set in both .env and .env.local
-# Format: postgresql://user:password@localhost:5432/database_name?schema=public
-
-# Generate Prisma client
-npx prisma generate
-
-# Option 1: Create migrations (requires CREATEDB permission for shadow database)
-npx prisma migrate dev --name init
-
-# Option 2: Push schema without migrations (recommended if no CREATEDB permission)
-npx prisma db push
-
-# Verify setup
-psql -U your_user -d your_database -c "\dt"  # List all tables
-```
-
-Include related data in queries:
-```typescript
-await prisma.invoice.findMany({
-  include: { lineItems: true }  // Joins LineItem records
-})
-```
-
-## File Upload Handling
-
-**Storage Strategy Pattern**:
-- Files saved via `StorageFactory.getStorage()` which selects provider (local or S3)
-- Local files: Saved to `public/uploads/`, `fileUrl` stores relative path: `/uploads/filename.pdf`
-- S3 files: Saved to `users/{userId}/invoices/{filename}`, `fileUrl` stores S3 URI: `s3://bucket/users/{userId}/invoices/filename.pdf`
-- Max file size: 10MB (validated in client and can be enforced server-side)
-- File validation: Must be `application/pdf` MIME type
-
-**Downloading Files**:
-- Local files: Direct access via public URL
-- S3 files: Use `/api/invoices/download?id={invoiceId}` to get presigned URL (1-hour expiry)
-- Storage factory automatically determines correct download method based on file URL prefix
-
-## API Security and Data Isolation
-
-All API routes enforce authentication and user data isolation:
-
-- **Authentication Check**: Each protected route calls `const session = await auth()` and returns 401 if `!session?.user?.id`
-- **User Data Filtering**: Database queries filter by `userId: session.user.id` to ensure users only see their own data
-- **Ownership Verification**: Before modifying/deleting resources, routes verify `resource.userId === session.user.id` (returns 403 if not owner)
-- **Password Security**: Passwords hashed with bcrypt (10 rounds), never stored in plain text
-
-### Example: Protected API Route Pattern
 ```typescript
 import { auth } from "@/lib/auth";
 
@@ -692,7 +379,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // 2. Filter data by user
+  // 2. Filter by user
   const invoices = await prisma.invoice.findMany({
     where: { userId: session.user.id }
   });
@@ -701,147 +388,192 @@ export async function GET(request: NextRequest) {
 }
 ```
 
-## Known Limitations
+**Security**:
+- Authentication: `await auth()` returns 401 if unauthenticated
+- Data filtering: Query by `userId: session.user.id`
+- Ownership verification: Check `resource.userId === session.user.id` (return 403 if not owner)
+- Password security: Bcrypt hashing, never plain text
 
-1. **Scanned PDFs**: Text-based extraction only. Scanned/image PDFs with poor OCR will fail. GPT-4 Vision integration is planned but not implemented.
-2. **No Automated Tests**: Test suite not yet implemented. Consider adding Jest or Vitest for unit/integration tests.
+### Working with Prisma
 
-## Cost Management
+```typescript
+// Include relations
+await prisma.invoice.findMany({
+  include: { lineItems: true }
+});
 
-Each AI processing call uses `gpt-4o-mini` which is highly cost-effective:
-- **Typical cost**: ~$0.001-0.005 per invoice (60-80% cheaper than GPT-4 Turbo)
-- **Pricing**: $0.150 per 1M input tokens, $0.600 per 1M output tokens
-- Processed invoices are cached in the database (don't reprocess)
-- Monitor usage at platform.openai.com
+// After schema changes
+npx prisma migrate dev --name descriptive_name
+npx prisma generate
+```
 
-### Cost Comparison
-- **GPT-4o-mini** (current): ~$0.001-0.005 per invoice ✅
-- **GPT-4 Turbo**: ~$0.01-0.05 per invoice
-- **GPT-4**: ~$0.03-0.15 per invoice
+## Features
 
-## UI Features
+### UI Capabilities
 
-### Dark Mode
-- Implemented using `next-themes` with system theme detection
-- ThemeProvider wraps the entire app in `src/app/layout.tsx`
-- Theme toggle button in sidebar (`theme-toggle.tsx`)
-- Preference persists in localStorage
-- CSS variables in `globals.css` handle theme colors
-
-### Loading States
-- Skeleton loaders display while data is being fetched (`skeleton.tsx`)
-- InvoiceTable shows 5 animated skeleton rows during initial load
-- `loadingInvoices` state in main page tracks fetch status
-- Prevents blank states and improves perceived performance
-
-### Invoice Detail View
-- Modal dialog (`InvoiceDetailDialog.tsx`) shows complete invoice information
-- Click eye icon in table Actions column to open
-- Displays: basic info, line items table, raw PDF text, AI response JSON, metadata
-- Scrollable content for long invoices
-- Uses Radix UI Dialog for accessibility
-
-### Delete Functionality
-- Trash icon in table Actions column
-- Confirmation dialog before deletion (`alert-dialog.tsx`)
-- Deletes both database record AND physical PDF file
-- Ownership verification ensures users can only delete their own invoices
-- Automatically refreshes table after deletion
-
-### Advanced Filtering & Search
-- Search bar filters by invoice number, file name, or line item descriptions
-- Status filter: all, pending, processing, processed, failed
-- Currency filter: all, USD, EUR, GBP, etc.
-- Date range filter: from/to dates
-- Amount range filter: min/max amounts
-- Pagination: 10 invoices per page with page navigation
-- Filters reset to page 1 when changed
-- Shows filtered count vs total count
-
-### Bulk Operations
-- Row selection with checkboxes in table header and each row
-- Select all/deselect all functionality
-- Bulk actions toolbar appears when invoices are selected
-- **Bulk Export**: Export only selected invoices to Excel/CSV/JSON
-- **Bulk Delete**: Delete multiple invoices at once (with confirmation dialog)
-- **Bulk Retry**: Retry processing for selected failed invoices
-- **Bulk Vendor Assignment**: Assign vendor to multiple invoices
-- Selection persists across filter changes but resets on page change
-
-### Error Handling & Retry
-- Failed invoices show alert icon with error details
-- Error messages stored in `aiResponse` field with timestamp
-- Click eye icon to view full error details in modal
-- Retry button (↻ icon) re-processes failed invoices
-- Retry clears previous line items and resets status to "processing"
-- Loading spinner shows during retry operation
+- **Dark Mode**: System theme detection, toggle in sidebar, persists in localStorage
+- **Loading States**: Skeleton loaders during data fetch
+- **Invoice Details**: Modal with full invoice data, line items, raw text, AI response
+- **Delete**: Confirmation dialog, deletes DB record and physical file
+- **Advanced Filtering**: Search, status/currency/date/amount filters, pagination (10 per page)
+- **Bulk Operations**: Row selection, bulk export/delete/retry/vendor assignment
+- **Error Handling**: Alert icons for failures, retry button, detailed error modals
 
 ### Vendor Management
-- Dedicated vendor management page (`/vendors`)
-- Create vendors with identifiers (Tax ID, Company Registration, etc.)
-- Create custom templates with:
-  - Custom AI prompts
-  - Custom field definitions
-  - Field mappings
-  - Validation rules
-- Automatic vendor detection during processing
-- Manual vendor assignment via bulk operations
-- Template usage statistics tracking
 
-## Recent Improvements
+- Vendor profiles with identifiers (Tax ID, etc.)
+- Custom extraction templates per vendor
+- Three-strategy auto-detection (identifier, AI, fuzzy)
+- Field mapping and validation rules
+- Bulk vendor assignment
+- Template usage statistics
 
-1. **Request Management with Audit Trails** (2026-01-02):
-   - Batch upload requests to organize invoices into logical groups
-   - Request lifecycle management (draft → processing → completed/partial/failed)
-   - Real-time statistics dashboard with financial metrics
-   - Comprehensive audit trail for compliance and debugging
-   - Timeline view with chronological event history
-   - Request detail page with Invoices, Timeline, and Audit Trail tabs
-   - Bulk operations on requests (export, delete)
-   - Backward compatible with orphaned invoices
-2. **Background Job Processing** (2026-01-02):
-   - BullMQ job queue with Redis for asynchronous processing
-   - Dedicated worker process with 5 concurrent jobs
-   - Real-time status updates via frontend polling
-   - Automatic retry with exponential backoff (3 attempts)
-   - Enhanced status badges (queued, processing, validation_failed)
-   - Three operational modes: separate worker, embedded, synchronous fallback
-   - Support for serverless (Vercel + Upstash) and self-hosted deployments
-   - Graceful degradation when Redis unavailable
-3. **AWS S3 Cloud Storage Integration** (2025-12-31):
-   - Implemented Storage Strategy Pattern for flexible file storage
-   - AWS S3 cloud storage with presigned URLs for secure downloads
-   - Hybrid local/S3 support for zero-downtime migration
-   - User-isolated storage structure (`users/{userId}/invoices/`)
-   - Server-side AES256 encryption
-   - Orphaned file cleanup API (`/api/admin/cleanup-orphaned-files`)
-   - Storage abstraction: `StorageStrategy` interface with `LocalStorage` and `S3Storage` implementations
-4. **PostgreSQL Database Migration** (2025-12-30):
-   - Migrated from SQLite to PostgreSQL for production scalability
-   - Added optimized @db.Text annotations for large text fields
-   - SQLite still supported for local development
-   - Created comprehensive migration guide (see MIGRATION_GUIDE.md)
-5. **Multi-Provider Authentication**:
-   - Email/password authentication with bcrypt
-   - Google OAuth sign-in with account linking
-   - Microsoft Azure AD OAuth for enterprise accounts
-   - Apple Sign-In for iOS/macOS users
-   - Email verification flow with token-based validation
-   - Password reset functionality via email
-6. **Vendor Management System**:
-   - Vendor profiles with identifiers for auto-detection
-   - Custom extraction templates per vendor
-   - Three-strategy vendor detection (identifier, AI, fuzzy)
-   - Field mapping and validation rules
-7. **Bulk Operations**:
-   - Row selection with checkboxes
-   - Bulk export (Excel/CSV/JSON) for selected invoices
-   - Bulk delete with confirmation
-   - Bulk retry for failed processing
-   - Bulk vendor assignment
-6. **Advanced Filtering**: Search, status/currency/date/amount filters, pagination
-7. **Error Handling**: Detailed error messages, retry functionality for failed invoices
-8. **Model Change** (Cost Optimization): Switched from `gpt-4-turbo-preview` to `gpt-4o-mini` for 60-80% cost reduction
-9. **Dark Mode**: Full theme support with toggle and persistence
-10. **Loading States**: Skeleton loaders and progress indicators improve UX
-11. **Invoice Details**: Comprehensive view modal with all invoice data and error details
+### Request Management
+
+- Batch uploads into logical groups
+- Auto-created or manual request creation
+- Lifecycle tracking (draft → processing → completed/partial/failed)
+- Real-time statistics dashboard
+- Visual timeline with chronological events
+- Detailed audit logs with filtering
+- Bulk operations (export, delete)
+
+## Directory Structure
+
+```
+src/
+├── app/
+│   ├── api/
+│   │   ├── auth/[...nextauth]/     # NextAuth handlers
+│   │   ├── signup/                 # User registration
+│   │   ├── upload/                 # File upload → storage + DB
+│   │   ├── process/                # AI processing dispatcher
+│   │   ├── invoices/               # Invoice CRUD, bulk operations
+│   │   ├── vendors/                # Vendor CRUD, templates
+│   │   ├── requests/               # Request management, audit logs
+│   │   └── export/                 # Excel/CSV/JSON generation
+│   ├── login/, verify-email/, reset-password/  # Auth pages
+│   ├── vendors/                    # Vendor management UI
+│   ├── requests/                   # Request management UI
+│   └── page.tsx                    # Main dashboard
+├── components/
+│   ├── FileUpload, InvoiceTable, InvoiceDetailDialog
+│   ├── vendors/                    # Vendor components
+│   ├── requests/                   # Request components
+│   └── ui/                         # shadcn/ui components
+├── lib/
+│   ├── auth.ts                     # NextAuth config
+│   ├── ai/                         # AI extraction, vendor detection
+│   ├── pdf/
+│   │   ├── parser.ts               # PDF text extraction
+│   │   └── image-converter.ts     # PDF-to-image converter
+│   ├── queue/                      # BullMQ job queue
+│   ├── storage/                    # Storage abstraction
+│   ├── export/                     # Excel/CSV/JSON generators
+│   ├── requests/, audit/           # Request and audit utilities
+│   └── db/prisma.ts                # Prisma client
+├── workers/                        # Background worker processes
+├── hooks/
+│   └── useInvoicePolling.ts        # Frontend polling
+└── types/                          # Zod schemas + TypeScript types
+```
+
+## Cost & Performance
+
+### AI Cost Management
+
+Using `gpt-4o-mini` for cost efficiency:
+- **Cost**: ~$0.001-0.005 per invoice (60-80% cheaper than GPT-4 Turbo)
+- **Pricing**: $0.150 per 1M input tokens, $0.600 per 1M output tokens
+- Invoices cached in database (no reprocessing)
+- Monitor usage at platform.openai.com
+
+**Cost Comparison**:
+- GPT-4o-mini: ~$0.001-0.005 per invoice ✅
+- GPT-4 Turbo: ~$0.01-0.05 per invoice
+- GPT-4: ~$0.03-0.15 per invoice
+
+### Known Limitations
+
+1. **Scanned PDFs**: Text extraction is default. For scanned/poor-quality PDFs, use manual Vision API reprocessing (higher cost but more accurate). Uses self-contained converter with zero external dependencies.
+2. **No Automated Tests**: Test suite not yet implemented. Consider adding Jest or Vitest.
+
+## Changelog
+
+### Recent Improvements
+
+**2026-01-04: Self-Contained PDF-to-Image Converter**
+- Eliminated Cloudinary dependency
+- Implemented zero-external-dependency converter using `pdf-to-png-converter`
+- Server-side rendering with no network round-trips
+- Free PDF conversion (only pay for OpenAI Vision API)
+- Updated Vision API route (`/api/invoices/[id]/reprocess-vision`)
+- Updated UI components to remove Cloudinary references
+
+**2026-01-02: Request Management with Audit Trails**
+- Batch upload requests to organize invoices
+- Request lifecycle management (draft → processing → completed/partial/failed)
+- Real-time statistics dashboard
+- Comprehensive audit trail for compliance
+- Timeline view with chronological events
+- Bulk operations (export, delete)
+- Backward compatible with orphaned invoices
+
+**2026-01-02: Background Job Processing**
+- BullMQ job queue with Redis
+- Dedicated worker process (5 concurrent jobs)
+- Real-time status updates via frontend polling
+- Automatic retry with exponential backoff (3 attempts)
+- Three operational modes (separate worker, embedded, synchronous)
+- Serverless support (Vercel + Upstash)
+- Graceful degradation when Redis unavailable
+
+**2025-12-31: AWS S3 Cloud Storage Integration**
+- Storage Strategy Pattern for flexible file storage
+- AWS S3 with presigned URLs (1-hour expiry)
+- Hybrid local/S3 support for zero-downtime migration
+- User-isolated storage (`users/{userId}/invoices/`)
+- Server-side AES256 encryption
+- Orphaned file cleanup API
+
+**2025-12-30: PostgreSQL Database Migration**
+- Migrated from SQLite to PostgreSQL
+- Optimized @db.Text annotations
+- SQLite still supported for development
+- Migration guide created
+
+**Multi-Provider Authentication**
+- Email/password with bcrypt
+- Google OAuth with account linking
+- Microsoft Azure AD OAuth
+- Email verification and password reset
+
+**Vendor Management System**
+- Vendor profiles with identifiers
+- Custom extraction templates
+- Three-strategy detection (identifier, AI, fuzzy)
+- Field mapping and validation
+
+**Bulk Operations**
+- Row selection with checkboxes
+- Bulk export (Excel/CSV/JSON)
+- Bulk delete, retry, vendor assignment
+- Selection persistence
+
+**Advanced Filtering & Search**
+- Search by invoice number, file name, line items
+- Status/currency/date/amount filters
+- Pagination (10 per page)
+
+**Error Handling & Retry**
+- Detailed error messages
+- Retry functionality for failed invoices
+- Loading states and progress indicators
+
+**Cost Optimization**
+- Switched from GPT-4 Turbo to GPT-4o-mini (60-80% cost reduction)
+
+**UI Enhancements**
+- Dark mode with system detection
+- Skeleton loaders
+- Comprehensive invoice detail modals

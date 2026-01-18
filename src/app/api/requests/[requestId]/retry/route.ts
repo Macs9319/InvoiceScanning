@@ -15,7 +15,7 @@ const WORKER_MODE = process.env.WORKER_MODE || 'separate';
  */
 export async function POST(
   request: NextRequest,
-  { params }: { params: { requestId: string } }
+  { params }: { params: Promise<{ requestId: string }> }
 ) {
   try {
     // 1. Check authentication
@@ -27,7 +27,7 @@ export async function POST(
       );
     }
 
-    const { requestId } = params;
+    const { requestId } = await params;
 
     // 2. Fetch request with failed invoices
     const uploadRequest = await prisma.uploadRequest.findUnique({
@@ -53,7 +53,7 @@ export async function POST(
     }
 
     // 4. Verify ownership
-    if (uploadRequest.userId !== session.user.id) {
+    if (uploadRequest.userId !== session.user!.id) {
       return NextResponse.json(
         { error: 'Forbidden' },
         { status: 403 }
@@ -106,7 +106,7 @@ export async function POST(
           // Async mode: Queue the retry job
           const jobId = await addInvoiceJob({
             invoiceId: invoice.id,
-            userId: session.user.id,
+            userId: session.user!.id,
             vendorId: uploadRequest.defaultVendorId || invoice.vendorId || undefined,
             attempt: invoice.retryCount + 1,
           });
@@ -152,7 +152,7 @@ export async function POST(
     // Log bulk retry event
     await logAuditEvent({
       requestId,
-      userId: session.user.id,
+      userId: session.user!.id,
       eventType: AuditEventTypes.BULK_RETRY,
       eventCategory: AuditEventCategories.USER_ACTION,
       severity: 'warning',
@@ -164,16 +164,17 @@ export async function POST(
       },
       targetType: 'request',
       targetId: requestId,
-      ipAddress,
-      userAgent,
+      ipAddress: ipAddress ?? undefined,
+      userAgent: userAgent ?? undefined,
     });
 
     // Log individual invoice retry events
+    const userId = session.user!.id; // Safe: auth checked above
     const auditEvents = retriedJobs
       .filter(job => !job.error)
       .map(job => ({
         requestId,
-        userId: session.user.id,
+        userId,
         eventType: AuditEventTypes.INVOICE_RETRIED,
         eventCategory: AuditEventCategories.INVOICE_OPERATION,
         severity: 'warning' as const,
@@ -181,8 +182,8 @@ export async function POST(
         targetType: 'invoice',
         targetId: job.invoiceId,
         metadata: { jobId: job.jobId },
-        ipAddress,
-        userAgent,
+        ipAddress: ipAddress ?? undefined,
+        userAgent: userAgent ?? undefined,
       }));
 
     await logBulkAuditEvents(auditEvents);

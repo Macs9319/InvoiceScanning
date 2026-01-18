@@ -9,7 +9,7 @@ import { calculateRequestStatistics } from '@/lib/requests/statistics';
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: { requestId: string } }
+  { params }: { params: Promise<{ requestId: string }> }
 ) {
   try {
     // 1. Check authentication
@@ -21,7 +21,7 @@ export async function GET(
       );
     }
 
-    const { requestId } = params;
+    const { requestId } = await params;
 
     // 2. Fetch request
     const uploadRequest = await prisma.uploadRequest.findUnique({
@@ -37,7 +37,7 @@ export async function GET(
     }
 
     // 4. Verify ownership
-    if (uploadRequest.userId !== session.user.id) {
+    if (uploadRequest.userId !== session.user!.id) {
       return NextResponse.json(
         { error: 'Forbidden' },
         { status: 403 }

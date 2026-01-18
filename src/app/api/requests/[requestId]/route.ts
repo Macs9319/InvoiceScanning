@@ -13,7 +13,7 @@ import { updateRequestStatistics } from '@/lib/requests/statistics';
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: { requestId: string } }
+  { params }: { params: Promise<{ requestId: string }> }
 ) {
   try {
     // 1. Check authentication
@@ -25,7 +25,7 @@ export async function GET(
       );
     }
 
-    const { requestId } = params;
+    const { requestId } = await params;
 
     // 2. Fetch request with related data
     const uploadRequest = await prisma.uploadRequest.findUnique({
@@ -90,7 +90,7 @@ export async function GET(
     }
 
     // 4. Verify ownership
-    if (uploadRequest.userId !== session.user.id) {
+    if (uploadRequest.userId !== session.user!.id) {
       return NextResponse.json(
         { error: 'Forbidden' },
         { status: 403 }
@@ -113,7 +113,7 @@ export async function GET(
  */
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { requestId: string } }
+  { params }: { params: Promise<{ requestId: string }> }
 ) {
   try {
     // 1. Check authentication
@@ -125,7 +125,7 @@ export async function PATCH(
       );
     }
 
-    const { requestId } = params;
+    const { requestId } = await params;
 
     // 2. Fetch existing request
     const existingRequest = await prisma.uploadRequest.findUnique({
@@ -141,7 +141,7 @@ export async function PATCH(
     }
 
     // 4. Verify ownership
-    if (existingRequest.userId !== session.user.id) {
+    if (existingRequest.userId !== session.user!.id) {
       return NextResponse.json(
         { error: 'Forbidden' },
         { status: 403 }
@@ -176,7 +176,7 @@ export async function PATCH(
     const { ipAddress, userAgent } = extractRequestMetadata(request);
     await logAuditEvent({
       requestId: updatedRequest.id,
-      userId: session.user.id,
+      userId: session.user!.id,
       eventType: AuditEventTypes.REQUEST_UPDATED,
       eventCategory: AuditEventCategories.REQUEST_LIFECYCLE,
       severity: 'info',
@@ -186,8 +186,8 @@ export async function PATCH(
       targetId: updatedRequest.id,
       previousValue: existingRequest,
       newValue: updatedRequest,
-      ipAddress,
-      userAgent,
+      ipAddress: ipAddress ?? undefined,
+      userAgent: userAgent ?? undefined,
     });
 
     return NextResponse.json({
@@ -218,7 +218,7 @@ export async function PATCH(
  */
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { requestId: string } }
+  { params }: { params: Promise<{ requestId: string }> }
 ) {
   try {
     // 1. Check authentication
@@ -230,7 +230,7 @@ export async function DELETE(
       );
     }
 
-    const { requestId } = params;
+    const { requestId } = await params;
 
     // 2. Fetch existing request
     const existingRequest = await prisma.uploadRequest.findUnique({
@@ -253,7 +253,7 @@ export async function DELETE(
     }
 
     // 4. Verify ownership
-    if (existingRequest.userId !== session.user.id) {
+    if (existingRequest.userId !== session.user!.id) {
       return NextResponse.json(
         { error: 'Forbidden' },
         { status: 403 }
@@ -276,7 +276,7 @@ export async function DELETE(
     // 7. Log audit event
     const { ipAddress, userAgent } = extractRequestMetadata(request);
     await logAuditEvent({
-      userId: session.user.id,
+      userId: session.user!.id,
       eventType: AuditEventTypes.REQUEST_DELETED,
       eventCategory: AuditEventCategories.REQUEST_LIFECYCLE,
       severity: 'warning',
@@ -287,8 +287,8 @@ export async function DELETE(
       targetType: 'request',
       targetId: requestId,
       previousValue: existingRequest,
-      ipAddress,
-      userAgent,
+      ipAddress: ipAddress ?? undefined,
+      userAgent: userAgent ?? undefined,
     });
 
     return NextResponse.json({

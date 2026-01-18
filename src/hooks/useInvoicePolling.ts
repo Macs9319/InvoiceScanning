@@ -37,6 +37,7 @@ export function useInvoicePolling(
   const [isPolling, setIsPolling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const previousStatusesRef = useRef<Map<string, string>>(new Map());
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const fetchStatuses = useCallback(async () => {
     if (invoiceIds.length === 0) return;
@@ -83,22 +84,52 @@ export function useInvoicePolling(
     }
   }, [invoiceIds, onStatusChange]);
 
-  useEffect(() => {
-    if (!enabled || invoiceIds.length === 0) return;
-
-    // Fetch immediately on mount or when invoiceIds change
-    fetchStatuses();
-
-    // Set up polling interval
-    const intervalId = setInterval(fetchStatuses, interval);
-
-    return () => clearInterval(intervalId);
-  }, [enabled, invoiceIds, interval, fetchStatuses]);
-
   // Check if there are any invoices currently being processed
   const hasProcessingInvoices = statuses.some(
     (s) => s.status === 'queued' || s.status === 'processing'
   );
+
+  // Effect to start/stop polling based on processing status
+  useEffect(() => {
+    if (!enabled || invoiceIds.length === 0) {
+      // Clear any existing interval
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+      return;
+    }
+
+    // Fetch immediately on mount or when invoiceIds change
+    fetchStatuses();
+
+    // If there are processing invoices, start polling
+    if (hasProcessingInvoices) {
+      // Clear any existing interval first
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+
+      // Set up new polling interval
+      intervalRef.current = setInterval(fetchStatuses, interval);
+      console.log('Started polling for', invoiceIds.length, 'invoices');
+    } else if (statuses.length > 0) {
+      // All invoices are done processing, stop polling
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+        console.log('All invoices processed, stopped polling');
+      }
+    }
+
+    // Cleanup function
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    };
+  }, [enabled, invoiceIds, interval, fetchStatuses, hasProcessingInvoices, statuses.length]);
 
   return {
     statuses,

@@ -202,9 +202,9 @@ function fuzzyMatchVendorName(
     // Check for partial name match (e.g., "Acme Corp" matches "Acme")
     const words = vendorNameLower.split(' ');
     if (words.length > 1) {
-      const significantWords = words.filter((w) => w.length > 3); // Skip short words like "Inc", "Ltd"
+      const significantWords = words.filter((w: string) => w.length > 3); // Skip short words like "Inc", "Ltd"
 
-      const matchCount = significantWords.filter((word) =>
+      const matchCount = significantWords.filter((word: string) =>
         firstPage.includes(word)
       ).length;
 

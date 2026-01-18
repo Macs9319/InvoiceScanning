@@ -62,7 +62,8 @@ async function main() {
             await modelDelegate.upsert(upsertArgs);
             console.log("Created test config in DB (via upsert)");
         } catch (upsertError) {
-            console.warn("Upsert failed (expected if composite key null issue), trying manual find/update:", upsertError.message);
+            const errorMessage = upsertError instanceof Error ? upsertError.message : String(upsertError);
+            console.warn("Upsert failed (expected if composite key null issue), trying manual find/update:", errorMessage);
 
             // Manual fallback
             const existing = await modelDelegate.findFirst({

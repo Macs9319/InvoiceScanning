@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db/prisma";
-import { StorageFactory } from "@/lib/storage";
+import { getStorageForFile, getDefaultStorage } from "@/lib/storage";
 
 /**
  * POST /api/profile/avatar
@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
     // Delete old avatar if exists (not OAuth avatars)
     if (currentUser?.image && !currentUser.image.startsWith("http")) {
       try {
-        const storage = StorageFactory.getStorage(currentUser.image);
+        const storage = getStorageForFile(currentUser.image);
         await storage.delete(currentUser.image);
       } catch (error) {
         console.error("Error deleting old avatar:", error);
@@ -65,20 +65,21 @@ export async function POST(request: NextRequest) {
     }
 
     // Upload new avatar with special path for avatars
-    const storage = StorageFactory.getStorage();
+    const storage = getDefaultStorage();
 
     // Create a unique filename for the avatar
     const timestamp = Date.now();
     const extension = file.name.split('.').pop() || 'jpg';
     const fileName = `avatar-${session.user.id}-${timestamp}.${extension}`;
 
-    // Convert File to Buffer
+    // Convert File to Buffer for storage
     const buffer = Buffer.from(await file.arrayBuffer());
-    const tempFile = new File([buffer], fileName, { type: file.type });
 
     // Upload to storage (S3 or local)
     // For avatars, we'll use a special "avatars" folder instead of "invoices"
-    const fileUrl = await storage.upload(tempFile, session.user.id);
+    // Create a temporary File-like object with the buffer
+    const tempFile = Object.assign(buffer, { name: fileName });
+    const fileUrl = await storage.upload(tempFile as any, session.user.id);
 
     // Update user's image URL in database
     const updatedUser = await prisma.user.update({
@@ -129,7 +130,7 @@ export async function DELETE(request: NextRequest) {
     // Delete avatar file if it exists and is not an OAuth avatar
     if (currentUser?.image && !currentUser.image.startsWith("http")) {
       try {
-        const storage = StorageFactory.getStorage(currentUser.image);
+        const storage = getStorageForFile(currentUser.image);
         await storage.delete(currentUser.image);
       } catch (error) {
         console.error("Error deleting avatar:", error);

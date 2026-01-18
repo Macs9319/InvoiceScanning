@@ -10,7 +10,7 @@ import { z } from 'zod';
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: { vendorId: string; templateId: string } }
+  { params }: { params: Promise<{ vendorId: string; templateId: string }> }
 ) {
   try {
     const session = await auth();
@@ -18,8 +18,10 @@ export async function GET(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    const { vendorId, templateId } = await params;
+
     const template = await prisma.vendorTemplate.findUnique({
-      where: { id: params.templateId },
+      where: { id: templateId },
       include: {
         vendor: true,
       },
@@ -58,7 +60,7 @@ export async function GET(
  */
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { vendorId: string; templateId: string } }
+  { params }: { params: Promise<{ vendorId: string; templateId: string }> }
 ) {
   try {
     const session = await auth();
@@ -66,8 +68,10 @@ export async function PATCH(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    const { vendorId, templateId } = await params;
+
     const template = await prisma.vendorTemplate.findUnique({
-      where: { id: params.templateId },
+      where: { id: templateId },
       include: {
         vendor: true,
       },
@@ -94,9 +98,9 @@ export async function PATCH(
     if (validatedData.isActive && !template.isActive) {
       await prisma.vendorTemplate.updateMany({
         where: {
-          vendorId: params.vendorId,
+          vendorId: vendorId,
           isActive: true,
-          id: { not: params.templateId },
+          id: { not: templateId },
         },
         data: {
           isActive: false,
@@ -105,7 +109,7 @@ export async function PATCH(
     }
 
     const updatedTemplate = await prisma.vendorTemplate.update({
-      where: { id: params.templateId },
+      where: { id: templateId },
       data: {
         ...(validatedData.name && { name: validatedData.name }),
         ...(validatedData.description !== undefined && {
@@ -142,7 +146,7 @@ export async function PATCH(
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json(
-        { error: 'Invalid input data', details: error.errors },
+        { error: 'Invalid input data', details: error.issues },
         { status: 400 }
       );
     }
@@ -161,7 +165,7 @@ export async function PATCH(
  */
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { vendorId: string; templateId: string } }
+  { params }: { params: Promise<{ vendorId: string; templateId: string }> }
 ) {
   try {
     const session = await auth();
@@ -169,8 +173,10 @@ export async function DELETE(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    const { vendorId, templateId } = await params;
+
     const template = await prisma.vendorTemplate.findUnique({
-      where: { id: params.templateId },
+      where: { id: templateId },
       include: {
         vendor: true,
       },
@@ -191,7 +197,7 @@ export async function DELETE(
     }
 
     await prisma.vendorTemplate.delete({
-      where: { id: params.templateId },
+      where: { id: templateId },
     });
 
     return NextResponse.json({

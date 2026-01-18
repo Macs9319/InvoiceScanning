@@ -109,6 +109,12 @@ model Invoice {
   retryCount            Int       @default(0) // Number of retries
   lastError             String?   @db.Text // Last error message (for debugging)
 
+  // Vision API / Scanned document detection
+  isScanned           Boolean @default(false) // Detected or user-flagged as scanned
+  processedWithVision Boolean @default(false) // Used Vision API for processing
+  visionApiCost       Float? // Track Vision API costs separately
+  textDensity         Float? // Text characters per page (detection metric)
+
   lineItems LineItem[]
   aiUsageLogs AIUsageLog[]
   createdAt DateTime   @default(now())
@@ -120,6 +126,7 @@ model Invoice {
   @@index([vendorId])
   @@index([jobId])
   @@index([requestId])
+  @@index([isScanned])
 }
 
 model LineItem {

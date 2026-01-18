@@ -13,7 +13,7 @@ import { calculateRequestStatus } from '@/lib/requests/status-calculator';
  */
 export async function POST(
   request: NextRequest,
-  { params }: { params: { requestId: string } }
+  { params }: { params: Promise<{ requestId: string }> }
 ) {
   try {
     // 1. Check authentication
@@ -25,7 +25,7 @@ export async function POST(
       );
     }
 
-    const { requestId } = params;
+    const { requestId } = await params;
 
     // 2. Fetch and verify request ownership
     const uploadRequest = await prisma.uploadRequest.findUnique({
@@ -39,7 +39,7 @@ export async function POST(
       );
     }
 
-    if (uploadRequest.userId !== session.user.id) {
+    if (uploadRequest.userId !== session.user!.id) {
       return NextResponse.json(
         { error: 'Forbidden' },
         { status: 403 }
@@ -62,7 +62,7 @@ export async function POST(
     const invoices = await prisma.invoice.findMany({
       where: {
         id: { in: validatedData.invoiceIds },
-        userId: session.user.id,
+        userId: session.user!.id,
       },
     });
 
@@ -100,17 +100,18 @@ export async function POST(
 
     // 9. Log audit events for each invoice
     const { ipAddress, userAgent } = extractRequestMetadata(request);
+    const userId = session.user!.id; // Safe: auth checked above
     const auditEvents = invoices.map(invoice => ({
       requestId,
-      userId: session.user.id,
+      userId,
       eventType: AuditEventTypes.INVOICE_ADDED_TO_REQUEST,
       eventCategory: AuditEventCategories.INVOICE_OPERATION,
       severity: 'info' as const,
       summary: `Invoice ${invoice.fileName} added to request`,
       targetType: 'invoice',
       targetId: invoice.id,
-      ipAddress,
-      userAgent,
+      ipAddress: ipAddress ?? undefined,
+      userAgent: userAgent ?? undefined,
     }));
 
     await logBulkAuditEvents(auditEvents);
@@ -143,7 +144,7 @@ export async function POST(
  */
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { requestId: string } }
+  { params }: { params: Promise<{ requestId: string }> }
 ) {
   try {
     // 1. Check authentication
@@ -155,7 +156,7 @@ export async function DELETE(
       );
     }
 
-    const { requestId } = params;
+    const { requestId } = await params;
 
     // 2. Fetch and verify request ownership
     const uploadRequest = await prisma.uploadRequest.findUnique({
@@ -169,7 +170,7 @@ export async function DELETE(
       );
     }
 
-    if (uploadRequest.userId !== session.user.id) {
+    if (uploadRequest.userId !== session.user!.id) {
       return NextResponse.json(
         { error: 'Forbidden' },
         { status: 403 }
@@ -192,7 +193,7 @@ export async function DELETE(
     const invoices = await prisma.invoice.findMany({
       where: {
         id: { in: validatedData.invoiceIds },
-        userId: session.user.id,
+        userId: session.user!.id,
         requestId,
       },
     });
@@ -219,17 +220,18 @@ export async function DELETE(
 
     // 8. Log audit events for each invoice
     const { ipAddress, userAgent } = extractRequestMetadata(request);
+    const userId = session.user!.id; // Safe: auth checked above
     const auditEvents = invoices.map(invoice => ({
       requestId,
-      userId: session.user.id,
+      userId,
       eventType: AuditEventTypes.INVOICE_REMOVED_FROM_REQUEST,
       eventCategory: AuditEventCategories.INVOICE_OPERATION,
       severity: 'info' as const,
       summary: `Invoice ${invoice.fileName} removed from request`,
       targetType: 'invoice',
       targetId: invoice.id,
-      ipAddress,
-      userAgent,
+      ipAddress: ipAddress ?? undefined,
+      userAgent: userAgent ?? undefined,
     }));
 
     await logBulkAuditEvents(auditEvents);

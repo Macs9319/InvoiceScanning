@@ -5,7 +5,13 @@
       "Bash(npx prisma:*)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(git push)"
+      "Bash(git push)",
+      "Bash(npm run build:*)",
+      "WebFetch(domain:github.com)",
+      "WebSearch",
+      "WebFetch(domain:community.openai.com)",
+      "WebFetch(domain:claude.com)",
+      "WebFetch(domain:docs.claude.com)"
     ]
   }
 }

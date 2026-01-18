@@ -131,7 +131,7 @@ export async function extractInvoiceData(
 
     // 5. Validate and parse
     const schema = buildDynamicSchema(template);
-    const validatedData = schema.parse(result.data);
+    const validatedData = schema.parse(result.data) as ExtractedInvoiceData;
 
     return validatedData;
   } catch (error) {
@@ -143,20 +143,135 @@ export async function extractInvoiceData(
   }
 }
 
+/**
+ * Extract invoice data using Vision API
+ * Used for scanned documents or when text extraction is insufficient
+ */
+export async function extractInvoiceDataWithVision(
+  images: string[], // Base64-encoded images
+  template?: VendorTemplate | null,
+  userId?: string,
+  options?: {
+    text?: string; // Optional accompanying text
+    pageCount?: number;
+  }
+): Promise<{ data: ExtractedInvoiceData; cost: number }> {
+  try {
+    // 1. Get appropriate provider
+    const provider = await ModelSelector.getProvider(userId || "system", template?.vendorId);
+
+    // 2. Check if provider supports Vision
+    if (!provider.supportsVision()) {
+      throw new Error(
+        `Provider ${provider.getProviderName()} does not support Vision API. ` +
+        `Please use a model that supports vision (e.g., gpt-4o, gpt-4o-mini, claude-3-5-sonnet)`
+      );
+    }
+
+    // 3. Build prompt
+    const prompt = buildExtractionPrompt(template);
+
+    // 4. Extract data using Vision API
+    const startTime = Date.now();
+    const result = await provider.extractWithVision(prompt, {
+      images,
+      text: options?.text,
+      pageCount: options?.pageCount,
+    });
+    const processingTime = Date.now() - startTime;
+
+    console.log(`Vision extraction completed in ${processingTime}ms`);
+    console.log(`Estimated cost: $${result.usage.cost?.toFixed(4) || '0.0000'}`);
+
+    // 5. Validate and parse
+    const schema = buildDynamicSchema(template);
+    const validatedData = schema.parse(result.data) as ExtractedInvoiceData;
+
+    return {
+      data: validatedData,
+      cost: result.usage.cost || 0,
+    };
+  } catch (error) {
+    console.error("Error extracting invoice data with Vision:", error);
+    if (error instanceof Error) {
+      throw new Error(`Failed to extract with Vision API: ${error.message}`);
+    }
+    throw new Error("Failed to extract with Vision API: Unknown error");
+  }
+}
+
 export async function extractInvoiceDataWithFallback(
   pdfText: string,
   pdfBuffer?: Buffer,
-  template?: VendorTemplate | null
-): Promise<ExtractedInvoiceData> {
-  try {
-    // First, try text extraction
-    return await extractInvoiceData(pdfText, template);
-  } catch (error) {
-    console.error("Text extraction failed, checking if we can use Vision API:", error);
+  template?: VendorTemplate | null,
+  userId?: string,
+  isScanned: boolean = false
+): Promise<{ data: ExtractedInvoiceData; cost: number; usedNativePDF: boolean }> {
+  // Get appropriate provider
+  const provider = await ModelSelector.getProvider(userId || "system", template?.vendorId);
 
-    // If we have a PDF buffer, we could convert to image and use GPT-4 Vision
-    // For now, we'll just rethrow the error
-    // In a production app, you'd implement image conversion and Vision API call here
+  // Debug logging
+  console.log(`[Extractor] isScanned=${isScanned}, hasPdfBuffer=${!!pdfBuffer}, supportsNativePDF=${provider.supportsNativePDF()}, provider=${provider.getProviderName()}`);
+
+  // If scanned document and provider supports native PDF, use it directly
+  if (isScanned && pdfBuffer && provider.supportsNativePDF()) {
+    console.log('Scanned document detected - using native PDF processing');
+
+    const prompt = buildExtractionPrompt(template);
+    const startTime = Date.now();
+    const result = await provider.extractFromPDF(pdfBuffer, prompt);
+    const processingTime = Date.now() - startTime;
+
+    console.log(`Native PDF extraction completed in ${processingTime}ms`);
+    console.log(`Estimated cost: $${result.usage.cost?.toFixed(6) || '0.000000'}`);
+
+    // Validate and parse
+    const schema = buildDynamicSchema(template);
+    const validatedData = schema.parse(result.data) as ExtractedInvoiceData;
+
+    return {
+      data: validatedData,
+      cost: result.usage.cost || 0,
+      usedNativePDF: true,
+    };
+  }
+
+  // Try text extraction first
+  try {
+    const extractedData = await extractInvoiceData(pdfText, template, userId);
+    return {
+      data: extractedData,
+      cost: 0, // Text extraction cost already tracked in extractInvoiceData
+      usedNativePDF: false,
+    };
+  } catch (error) {
+    console.error("Text extraction failed, attempting fallback:", error);
+
+    // Fallback 1: Try native PDF if available and we have buffer
+    if (pdfBuffer && provider.supportsNativePDF()) {
+      console.log('Falling back to native PDF processing');
+
+      const prompt = buildExtractionPrompt(template);
+      const startTime = Date.now();
+      const result = await provider.extractFromPDF(pdfBuffer, prompt);
+      const processingTime = Date.now() - startTime;
+
+      console.log(`Native PDF fallback completed in ${processingTime}ms`);
+
+      // Validate and parse
+      const schema = buildDynamicSchema(template);
+      const validatedData = schema.parse(result.data) as ExtractedInvoiceData;
+
+      return {
+        data: validatedData,
+        cost: result.usage.cost || 0,
+        usedNativePDF: true,
+      };
+    }
+
+    // Fallback 2: Try Vision API if supported (requires image conversion)
+    // This would need images to be provided or converted from PDF
+    // For now, we'll just rethrow if native PDF isn't available
 
     throw error;
   }

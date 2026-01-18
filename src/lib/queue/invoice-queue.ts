@@ -10,6 +10,9 @@ export interface InvoiceJobData {
   userId: string;
   vendorId?: string; // Optional manual vendor override
   attempt: number;
+  // Vision API processing
+  useVision?: boolean; // Use Vision API instead of text extraction
+  images?: string[]; // Base64-encoded images for Vision processing
 }
 
 export interface InvoiceJobResult {
@@ -60,7 +63,6 @@ export async function addInvoiceJob(
 
   const job = await queue.add('process-invoice', data, {
     jobId: `invoice-${data.invoiceId}-${Date.now()}`, // Unique job ID
-    timeout: parseInt(process.env.JOB_TIMEOUT || '120000'),
   });
 
   return job.id!;

@@ -107,22 +107,174 @@ This document tracks planned features, enhancements, and technical improvements 
 
 ## 🟡 Medium Priority - Feature Enhancements
 
-### 4. GPT-4 Vision for Scanned Documents
+### 4. GPT-4 Vision for Scanned Documents ✅
 **Current Issue**: Scanned/image-based PDFs fail to extract properly
 **Impact**: Medium - improves extraction accuracy for difficult documents
-**Effort**: Medium (2-3 days)
-**Status**: Not Started
+**Effort**: Medium (3-4 days)
+**Status**: ✅ Completed (2026-01-04 - Phases 1, 2, and 3)
 
-**Suggested Approach**:
-- Implement fallback to GPT-4 Vision API when text extraction yields poor results
-- Convert PDF pages to images
-- Send images to GPT-4 Vision for extraction
-- Add quality detection heuristics (low text density = scanned document)
+**Completed Features**:
+- ✅ Phase 1: Scanned document detection with heuristic analysis
+- ✅ Phase 2: Vision API integration with OpenAI gpt-4o/gpt-4o-mini
+- ✅ Phase 3: Cloudinary PDF to image conversion (automatic server-side)
+- ✅ Cost calculator for Vision API with provider pricing
+- ✅ Vision reprocessing API endpoint with automatic PDF conversion
+- ✅ "Reprocess with Vision" button in invoice table (blue Scan icon)
+- ✅ Vision processing modal with cost warnings and Cloudinary info
+- ✅ Cost tracking in database (processedWithVision, visionApiCost)
+- ✅ Vision processed badge in invoice detail view
+- ✅ Scanned document detection section in invoice details
+- ✅ Cloudinary integration for PDF→image (25 free conversions/month)
+- ✅ Worker and legacy processor Vision integration
+- ✅ Comprehensive documentation (PHASE2 & PHASE3 progress docs)
+
+**Files Created**:
+- `src/lib/pdf/detector.ts` - Scanned document detection (Phase 1)
+- `src/lib/ai/vision-cost-calculator.ts` - Cost estimation (Phase 2)
+- `src/lib/cloudinary/client.ts` - Cloudinary configuration (Phase 3)
+- `src/lib/cloudinary/pdf-to-image.ts` - PDF conversion (Phase 3)
+- `src/components/ScannedDocumentBadge.tsx` - UI badge (Phase 1)
+- `src/components/VisionProcessingModal.tsx` - Processing modal (Phase 2)
+- `src/components/ui/alert.tsx` - Alert component (Phase 2)
+- `src/app/api/invoices/[id]/reprocess-vision/route.ts` - API endpoint (Phase 2)
+- `PHASE2-VISION-PROGRESS.md` - Phase 2 documentation
+- `PHASE3-PDF-CONVERSION-COMPLETE.md` - Phase 3 documentation
+
+**Files Modified**:
+- `prisma/schema.prisma` - Added isScanned, processedWithVision, visionApiCost, textDensity
+- `src/lib/pdf/parser.ts` - Added text density calculation
+- `src/lib/pdf/simple-image-converter.ts` - Cloudinary implementation
+- `src/lib/ai/extractor.ts` - Added extractInvoiceDataWithVision()
+- `src/lib/ai/providers/base.ts` - Added Vision extraction interface
+- `src/lib/ai/providers/openai-compatible.ts` - Vision implementation
+- `src/workers/processor-logic.ts` - Scanned detection & Vision processing
+- `src/app/api/process/legacy-processor.ts` - Vision processing support
+- `src/components/InvoiceTable.tsx` - Reprocess button & scanned badge
+- `src/components/InvoiceDetailDialog.tsx` - Vision info display
+- `.env.example` - Cloudinary configuration section
+- `package.json` - Added cloudinary dependency
+
+**Implementation Details**:
+
+**Original Architecture Proposal**:
+
+The previous implementation had issues with:
+- Heavy native dependencies (skia-canvas, pdfjs-dist)
+- Automatic fallback without user control/cost awareness
+- Memory-intensive PDF-to-image conversion
+- Deployment complexity
+
+**Better Approach - Explicit Vision Processing**:
+
+1. **Detection-Only Approach** (Phase 1 - Simple):
+   - Detect scanned documents by analyzing text extraction results
+   - Heuristics: low text density, no selectable text, image-only content
+   - Show warning badge on invoice: "⚠️ Scanned Document Detected"
+   - Add "Reprocess with Vision" button in UI (explicit user action)
+   - Store `isScanned` flag in database for identification
+
+2. **Vision API Integration** (Phase 2 - Core Feature):
+   - Add `useVision` flag to processing API
+   - When enabled, use AI provider's vision capability directly (no PDF conversion needed)
+   - Let AI provider handle multimodal input (most support direct file upload)
+   - Add cost warning modal before Vision processing
+   - Track Vision API usage separately for cost monitoring
+
+3. **Lightweight PDF Rendering** (Phase 3 - If needed):
+   - Only convert FIRST page to image (not entire PDF)
+   - Use browser-based rendering via API route (Puppeteer/Playwright)
+   - Or use external service (Cloudinary, Imgix, Adobe PDF Services)
+   - Cache rendered images in S3 to avoid re-conversion
+
+4. **UI/UX Improvements** (Phase 4):
+   - Upload-time checkbox: "This is a scanned document" (bypasses text extraction)
+   - Batch scanned document processing
+   - Cost estimator: "Processing 5 scanned documents ≈ $0.50"
+   - Invoice detail view shows "Processed with Vision API" badge
+
+**Database Schema Changes**:
+```prisma
+model Invoice {
+  // ... existing fields ...
+
+  isScanned           Boolean   @default(false)  // Detected or user-flagged
+  processedWithVision Boolean   @default(false)  // Used Vision API
+  visionApiCost       Float?                     // Track Vision costs separately
+  textDensity         Float?                     // Text chars per page (detection metric)
+}
+```
+
+**API Changes**:
+```typescript
+// POST /api/process
+{
+  invoiceId: string;
+  useVision?: boolean;  // Explicit flag to use Vision API
+  forceReprocess?: boolean;  // Reprocess even if already processed
+}
+
+// POST /api/invoices/detect-scanned
+// Analyzes already-uploaded invoices to detect scanned documents
+{
+  invoiceIds: string[];
+}
+```
+
+**Implementation Plan**:
+
+**Phase 1: Detection (1 day)**
+- Add text density calculation to PDF parser
+- Add `isScanned` detection logic after text extraction
+- Update database schema with new fields
+- Add warning badge to InvoiceTable component
+- Create `detectScannedInvoices` utility function
+
+**Phase 2: Vision Processing (2 days)**
+- Add `useVision` parameter to extraction functions
+- Update AI provider interface to support file-based input
+- Implement Vision processing in OpenAI provider (use file upload API)
+- Add cost calculation and warning modal
+- Create "Reprocess with Vision" action in UI
+- Add Vision API usage tracking
+
+**Phase 3: UI/UX (1 day)**
+- Add upload-time checkbox for scanned documents
+- Create cost estimator component
+- Add batch Vision processing
+- Show Vision API badge and costs in invoice details
+- Add settings toggle: "Auto-detect scanned documents"
+
+**Files to Create**:
+- `src/lib/pdf/detector.ts` - Scanned document detection logic
+- `src/lib/ai/vision-cost-calculator.ts` - Vision API cost estimation
+- `src/app/api/invoices/detect-scanned/route.ts` - Batch detection endpoint
+- `src/components/VisionProcessingModal.tsx` - Cost warning and confirmation
+- `src/components/ScannedDocumentBadge.tsx` - Warning badge component
 
 **Files to Modify**:
-- `src/lib/ai/extractor.ts` - Add Vision API integration
-- `src/lib/pdf/parser.ts` - Add image conversion capabilities
-- Add new dependencies: `pdf2pic` or similar
+- `prisma/schema.prisma` - Add isScanned, processedWithVision, visionApiCost fields
+- `src/lib/pdf/parser.ts` - Add text density calculation
+- `src/lib/ai/extractor.ts` - Add optional Vision processing path
+- `src/lib/ai/providers/base.ts` - Add vision processing method to interface
+- `src/lib/ai/providers/openai.ts` - Implement vision processing (use file upload)
+- `src/app/api/process/route.ts` - Support useVision parameter
+- `src/workers/processor-logic.ts` - Detect scanned documents during processing
+- `src/components/InvoiceTable.tsx` - Add scanned badge and "Reprocess" action
+- `src/components/InvoiceDetailDialog.tsx` - Show Vision processing info
+- `src/components/FileUpload.tsx` - Add "Scanned document" checkbox
+
+**Benefits of New Approach**:
+- ✅ No heavy native dependencies (deployment-friendly)
+- ✅ Explicit user control (cost awareness)
+- ✅ Works with existing AI provider abstraction
+- ✅ Progressive enhancement (detection → Vision processing)
+- ✅ Cost tracking and transparency
+- ✅ Lighter resource usage (only process when needed)
+
+**Cost Comparison**:
+- Text extraction: ~$0.001-0.005 per invoice
+- Vision API: ~$0.01-0.10 per invoice (20x more expensive)
+- Detection-only approach: No additional cost until user chooses Vision
 
 ---
 
@@ -718,7 +870,7 @@ All phases completed successfully with comprehensive implementation including:
 3. ~~Database migration to PostgreSQL~~ ✅ **COMPLETED**
 
 ### Phase 2 - Enhanced Features ✅ **MOSTLY COMPLETED**
-4. GPT-4 Vision for scanned documents
+4. GPT-4 Vision for scanned documents (NEW ARCHITECTURE - Not Started)
 5. ~~Additional OAuth providers~~ ✅ **COMPLETED**
 6. ~~Invoice templates & vendor management~~ ✅ **COMPLETED**
 7. ~~User Profile Page~~ ✅ **COMPLETED**
@@ -758,4 +910,4 @@ From CLAUDE.md and codebase analysis:
 
 ---
 
-Last Updated: 2026-01-03 (Updated item #8 Settings Page to ✅ Completed; comprehensive settings management with 5 tabbed categories for appearance, notifications, processing, export, and security preferences)
+Last Updated: 2026-01-03 (Reverted item #4 GPT-4 Vision implementation and created new architecture proposal)

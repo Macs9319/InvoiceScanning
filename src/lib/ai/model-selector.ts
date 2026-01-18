@@ -63,11 +63,33 @@ export class ModelSelector {
             }
         }
 
-        // 3. Fallback to system default (OpenAI GPT-4o-mini)
+        // 3. Try to find system-wide default (userId: null, vendorId: null)
+        if (modelDelegate) {
+            const systemConfig = await modelDelegate.findFirst({
+                where: {
+                    userId: null,
+                    vendorId: null,
+                    isActive: true,
+                },
+            });
+
+            if (systemConfig) {
+                return {
+                    provider: systemConfig.provider,
+                    model: systemConfig.model,
+                    apiKey: systemConfig.apiKey || undefined,
+                    temperature: systemConfig.temperature,
+                    maxTokens: systemConfig.maxTokens || undefined,
+                };
+            }
+        }
+
+        // 4. Final fallback to OpenAI GPT-4o-mini
         return {
             provider: "openai",
             model: "gpt-4o-mini",
             temperature: 0.1,
+            maxTokens: 2048,
         };
     }
 
@@ -84,7 +106,7 @@ export class ModelSelector {
                 apiKey = process.env.OPENAI_API_KEY;
             } else if (config.provider === "anthropic") {
                 apiKey = process.env.ANTHROPIC_API_KEY;
-            } else if (config.provider === "google") {
+            } else if (config.provider === "google" || config.provider === "gemini") {
                 apiKey = process.env.GOOGLE_AI_API_KEY;
             }
         }

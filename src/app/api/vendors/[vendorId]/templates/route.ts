@@ -10,7 +10,7 @@ import { z } from 'zod';
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: { vendorId: string } }
+  { params }: { params: Promise<{ vendorId: string }> }
 ) {
   try {
     const session = await auth();
@@ -18,9 +18,11 @@ export async function GET(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    const { vendorId } = await params;
+
     // Verify vendor ownership
     const vendor = await prisma.vendor.findUnique({
-      where: { id: params.vendorId },
+      where: { id: vendorId },
     });
 
     if (!vendor) {
@@ -35,7 +37,7 @@ export async function GET(
     }
 
     const templates = await prisma.vendorTemplate.findMany({
-      where: { vendorId: params.vendorId },
+      where: { vendorId: vendorId },
       orderBy: [{ isActive: 'desc' }, { createdAt: 'desc' }],
     });
 
@@ -58,7 +60,7 @@ export async function GET(
  */
 export async function POST(
   request: NextRequest,
-  { params }: { params: { vendorId: string } }
+  { params }: { params: Promise<{ vendorId: string }> }
 ) {
   try {
     const session = await auth();
@@ -66,9 +68,11 @@ export async function POST(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    const { vendorId } = await params;
+
     // Verify vendor ownership
     const vendor = await prisma.vendor.findUnique({
-      where: { id: params.vendorId },
+      where: { id: vendorId },
     });
 
     if (!vendor) {
@@ -89,7 +93,7 @@ export async function POST(
     if (validatedData.isActive) {
       await prisma.vendorTemplate.updateMany({
         where: {
-          vendorId: params.vendorId,
+          vendorId: vendorId,
           isActive: true,
         },
         data: {
@@ -100,7 +104,7 @@ export async function POST(
 
     const template = await prisma.vendorTemplate.create({
       data: {
-        vendorId: params.vendorId,
+        vendorId: vendorId,
         name: validatedData.name,
         description: validatedData.description || null,
         isActive: validatedData.isActive ?? true,
@@ -127,7 +131,7 @@ export async function POST(
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json(
-        { error: 'Invalid input data', details: error.errors },
+        { error: 'Invalid input data', details: error.issues },
         { status: 400 }
       );
     }

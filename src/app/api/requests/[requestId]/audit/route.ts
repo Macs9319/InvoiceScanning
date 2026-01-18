@@ -9,7 +9,7 @@ import { AuditLogQuerySchema, parseAuditLogJson } from '@/types/audit';
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: { requestId: string } }
+  { params }: { params: Promise<{ requestId: string }> }
 ) {
   try {
     // 1. Check authentication
@@ -21,7 +21,7 @@ export async function GET(
       );
     }
 
-    const { requestId } = params;
+    const { requestId } = await params;
 
     // 2. Verify request exists and belongs to user
     const uploadRequest = await prisma.uploadRequest.findUnique({
@@ -35,7 +35,7 @@ export async function GET(
       );
     }
 
-    if (uploadRequest.userId !== session.user.id) {
+    if (uploadRequest.userId !== session.user!.id) {
       return NextResponse.json(
         { error: 'Forbidden' },
         { status: 403 }
@@ -59,7 +59,7 @@ export async function GET(
     // 4. Build where clause
     const where: any = {
       requestId,
-      userId: session.user.id,
+      userId: session.user!.id,
     };
 
     if (validatedQuery.eventType) {

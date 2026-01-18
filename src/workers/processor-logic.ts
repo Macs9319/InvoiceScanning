@@ -4,8 +4,9 @@
  */
 import { Job } from 'bullmq';
 import { prisma } from '@/lib/db/prisma';
-import { extractTextFromPDF } from '@/lib/pdf/parser';
-import { extractInvoiceData } from '@/lib/ai/extractor';
+import { parsePDF } from '@/lib/pdf/parser';
+import { detectScannedDocument } from '@/lib/pdf/detector';
+import { extractInvoiceData, extractInvoiceDataWithVision, extractInvoiceDataWithFallback } from '@/lib/ai/extractor';
 import { detectVendorFromText } from '@/lib/ai/vendor-detector';
 import { applyFieldMappings, separateStandardAndCustomFields } from '@/lib/ai/field-mapper';
 import { applyValidationRules } from '@/lib/ai/schema-builder';
@@ -18,7 +19,7 @@ import { logAuditEvent, AuditEventTypes, AuditEventCategories } from '@/lib/audi
 export async function processInvoiceJob(
   job: Job<InvoiceJobData>
 ): Promise<InvoiceJobResult> {
-  const { invoiceId, userId, vendorId } = job.data;
+  const { invoiceId, userId, vendorId, useVision, images } = job.data;
 
   try {
     // 1. Get and validate invoice
@@ -32,6 +33,12 @@ export async function processInvoiceJob(
 
     if (invoice.userId !== userId) {
       throw new Error('Unauthorized: Invoice does not belong to user');
+    }
+
+    // 1a. Check if Vision processing is requested
+    if (useVision && images && images.length > 0) {
+      console.log(`Processing invoice ${invoiceId} with Vision API (${images.length} images)`);
+      return await processInvoiceJobWithVision(job, invoice);
     }
 
     if (!invoice.fileUrl) {
@@ -93,14 +100,52 @@ export async function processInvoiceJob(
       );
     }
 
-    // 4. Extract text from PDF
+    // 4. Extract text from PDF and detect if scanned
     let pdfText: string;
+    let numPages: number = 1;
+    let textDensity: number | null = null;
+    let isScanned = false;
+
     try {
-      pdfText = await extractTextFromPDF(fileBuffer);
+      const parseResult = await parsePDF(fileBuffer);
+
+      if (!parseResult.success) {
+        throw new Error(parseResult.error || 'Failed to parse PDF');
+      }
+
+      pdfText = parseResult.text;
+      numPages = parseResult.numPages || 1;
+
+      // Detect if document is scanned
+      const detection = detectScannedDocument(pdfText, numPages);
+      isScanned = detection.isScanned;
+      textDensity = detection.textDensity;
+
+      if (isScanned) {
+        console.warn(
+          `Invoice ${invoiceId}: Scanned document detected (confidence: ${(detection.confidence * 100).toFixed(0)}%)`,
+          detection.reasons
+        );
+      }
+
+      // If PDF has no extractable text, set empty string and continue
+      // Gemini's native PDF processing will handle scanned documents automatically
       if (!pdfText || pdfText.trim().length === 0) {
-        throw new Error('PDF contains no extractable text. The document may be an image-based scan.');
+        console.log(`Invoice ${invoiceId}: No extractable text found, will use native PDF processing`);
+        pdfText = ''; // Set empty string so AI extraction can proceed with native PDF
+        isScanned = true; // Mark as scanned to trigger native PDF processing
       }
     } catch (pdfError) {
+      // If detection was run, save results before throwing
+      if (typeof isScanned !== 'undefined') {
+        await prisma.invoice.update({
+          where: { id: invoiceId },
+          data: {
+            isScanned: isScanned,
+            textDensity: textDensity,
+          },
+        });
+      }
       throw new Error(
         `PDF text extraction failed: ${pdfError instanceof Error ? pdfError.message : 'Unknown error'}`
       );
@@ -143,9 +188,25 @@ export async function processInvoiceJob(
     }
 
     // 7. Extract invoice data using AI with template
+    // Use fallback which automatically handles scanned documents with native PDF processing
     let extractedData;
+    let visionApiCost = 0;
+    let processedWithVision = false;
     try {
-      extractedData = await extractInvoiceData(pdfText, template, userId);
+      const result = await extractInvoiceDataWithFallback(
+        pdfText,
+        fileBuffer, // Pass PDF buffer for native PDF processing
+        template,
+        userId,
+        isScanned // Flag to indicate if document is scanned
+      );
+      extractedData = result.data;
+      visionApiCost = result.cost;
+      processedWithVision = result.usedNativePDF;
+
+      if (processedWithVision) {
+        console.log(`Invoice ${invoiceId}: Processed with native PDF extraction (cost: $${visionApiCost.toFixed(6)})`);
+      }
     } catch (aiError) {
       throw new Error(
         `AI extraction failed: ${aiError instanceof Error ? aiError.message : 'Unknown error'}`
@@ -195,6 +256,10 @@ export async function processInvoiceJob(
         detectedVendorId: detectedVendorId,
         templateId: template?.id || null,
         customData: Object.keys(customFields).length > 0 ? JSON.stringify(customFields) : null,
+        processedWithVision: processedWithVision,
+        visionApiCost: visionApiCost > 0 ? visionApiCost : null,
+        isScanned: isScanned,
+        textDensity: textDensity,
         processingCompletedAt: new Date(),
         lastError: null, // Clear previous errors on success
         lineItems: {
@@ -431,5 +496,190 @@ export async function processInvoiceJob(
     }
 
     throw processingError; // Re-throw for BullMQ retry logic
+  }
+}
+
+/**
+ * Process invoice using Vision API
+ * Used for scanned documents or when text extraction failed
+ */
+async function processInvoiceJobWithVision(
+  job: Job<InvoiceJobData>,
+  invoice: any
+): Promise<InvoiceJobResult> {
+  const { invoiceId, userId, vendorId, images } = job.data;
+
+  if (!images || images.length === 0) {
+    throw new Error('No images provided for Vision processing');
+  }
+
+  try {
+    // Update status to processing
+    await prisma.invoice.update({
+      where: { id: invoiceId },
+      data: {
+        status: 'processing',
+        processingStartedAt: new Date(),
+        jobId: job.id,
+      },
+    });
+
+    // Get vendor template if specified
+    let finalVendorId = vendorId;
+    let template = null;
+
+    if (finalVendorId) {
+      const vendor = await prisma.vendor.findUnique({
+        where: { id: finalVendorId },
+        include: {
+          templates: {
+            where: { isActive: true },
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+          },
+        },
+      });
+
+      if (vendor?.templates?.[0]) {
+        template = vendor.templates[0];
+      }
+    }
+
+    // Extract with Vision API
+    console.log(`Calling Vision API for invoice ${invoiceId} with ${images.length} images...`);
+    const { data: extractedData, cost } = await extractInvoiceDataWithVision(
+      images,
+      template,
+      userId,
+      { pageCount: images.length }
+    );
+
+    console.log(`Vision extraction completed. Cost: $${cost.toFixed(4)}`);
+
+    // Apply field mappings
+    const mappedData = applyFieldMappings(extractedData, template?.fieldMappings);
+
+    // Apply validation
+    const validation = applyValidationRules(mappedData, template?.validationRules);
+    const finalStatus = validation.valid ? 'processed' : 'validation_failed';
+
+    // Separate standard and custom fields
+    const { standardFields, customFields } = separateStandardAndCustomFields(mappedData);
+
+    // Parse date
+    let parsedDate: Date | null = null;
+    if (standardFields.date) {
+      try {
+        parsedDate = new Date(standardFields.date);
+      } catch (e) {
+        console.error('Error parsing date:', e);
+      }
+    }
+
+    // Update invoice with Vision results
+    const updatedInvoice = await prisma.invoice.update({
+      where: { id: invoiceId },
+      data: {
+        invoiceNumber: standardFields.invoiceNumber || null,
+        date: parsedDate,
+        totalAmount: standardFields.totalAmount || null,
+        currency: standardFields.currency || 'USD',
+        status: finalStatus,
+        rawText: 'Processed with Vision API',
+        aiResponse: JSON.stringify({
+          ...extractedData,
+          validation: validation.valid ? null : validation.errors,
+          processedWithVision: true,
+          visionCost: cost,
+        }),
+        vendorId: finalVendorId || null,
+        templateId: template?.id || null,
+        customData: Object.keys(customFields).length > 0 ? JSON.stringify(customFields) : null,
+        processedWithVision: true,
+        visionApiCost: cost,
+        processingCompletedAt: new Date(),
+        lastError: null,
+        lineItems: {
+          deleteMany: {}, // Clear old line items
+          create: (standardFields.lineItems || []).map((item: any, index: number) => ({
+            description: item.description,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            amount: item.amount,
+            order: index,
+          })),
+        },
+      },
+      include: {
+        lineItems: true,
+        vendor: true,
+      },
+    });
+
+    // Log audit event
+    if (invoice.requestId) {
+      await logAuditEvent({
+        requestId: invoice.requestId,
+        userId,
+        eventType: AuditEventTypes.INVOICE_PROCESSING_COMPLETED,
+        eventCategory: AuditEventCategories.INVOICE_OPERATION,
+        severity: 'info',
+        summary: `Invoice processed with Vision API: ${invoice.fileName}`,
+        details: {
+          invoiceId,
+          visionCost: cost,
+          pageCount: images.length,
+          status: finalStatus,
+        },
+        targetType: 'invoice',
+        targetId: invoiceId,
+        newValue: {
+          status: finalStatus,
+          totalAmount: standardFields.totalAmount,
+          processedWithVision: true,
+        },
+      });
+    }
+
+    // Update request statistics if applicable
+    if (invoice.requestId) {
+      const request = await prisma.uploadRequest.findUnique({
+        where: { id: invoice.requestId },
+        include: { invoices: { select: { status: true } } },
+      });
+
+      if (request) {
+        const newRequestStatus = calculateRequestStatus(request.invoices);
+        await updateRequestStatistics(invoice.requestId, newRequestStatus);
+      }
+    }
+
+    console.log(`Vision processing completed successfully for invoice ${invoiceId}`);
+
+    return {
+      success: true,
+      invoiceId,
+      extractedData: updatedInvoice,
+    };
+  } catch (error) {
+    console.error(`Vision processing failed for invoice ${invoiceId}:`, error);
+
+    const errorMessage = error instanceof Error ? error.message : 'Unknown Vision processing error';
+
+    await prisma.invoice.update({
+      where: { id: invoiceId },
+      data: {
+        status: 'failed',
+        lastError: errorMessage,
+        aiResponse: JSON.stringify({
+          error: errorMessage,
+          timestamp: new Date().toISOString(),
+          attemptedWithVision: true,
+        }),
+        processingCompletedAt: new Date(),
+      },
+    });
+
+    throw error;
   }
 }

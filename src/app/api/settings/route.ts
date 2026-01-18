@@ -85,7 +85,7 @@ export async function PATCH(request: NextRequest) {
 
     if (!validation.success) {
       return NextResponse.json(
-        { error: "Invalid input", details: validation.error.errors },
+        { error: "Invalid input", details: validation.error.issues },
         { status: 400 }
       );
     }

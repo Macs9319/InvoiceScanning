@@ -39,7 +39,7 @@ export async function POST(request: NextRequest) {
     const requests = await prisma.uploadRequest.findMany({
       where: {
         id: { in: validatedData.requestIds },
-        userId: session.user.id,
+        userId: session.user!.id,
       },
       include: {
         defaultVendor: {
@@ -64,7 +64,7 @@ export async function POST(request: NextRequest) {
     // 5. Log audit event
     const { ipAddress, userAgent } = extractRequestMetadata(request);
     await logAuditEvent({
-      userId: session.user.id,
+      userId: session.user!.id,
       eventType: AuditEventTypes.BULK_EXPORT,
       eventCategory: AuditEventCategories.USER_ACTION,
       severity: 'info',
@@ -75,8 +75,8 @@ export async function POST(request: NextRequest) {
         count: requests.length,
       },
       targetType: 'request',
-      ipAddress,
-      userAgent,
+      ipAddress: ipAddress ?? undefined,
+      userAgent: userAgent ?? undefined,
     });
 
     // 6. Generate export based on format

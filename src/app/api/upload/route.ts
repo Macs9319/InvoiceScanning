@@ -126,17 +126,18 @@ export async function POST(request: NextRequest) {
 
       // Log audit events for uploaded invoices
       const { ipAddress, userAgent } = extractRequestMetadata(request);
+      const userId = session.user!.id; // Safe: auth checked above
       const auditEvents = uploadedFiles.map(file => ({
         requestId: uploadRequestId!,
-        userId: session.user!.id,
+        userId,
         eventType: AuditEventTypes.INVOICE_UPLOADED,
         eventCategory: AuditEventCategories.INVOICE_OPERATION,
         severity: 'info' as const,
         summary: `Invoice uploaded: ${file.fileName}`,
         targetType: 'invoice',
         targetId: file.id,
-        ipAddress,
-        userAgent,
+        ipAddress: ipAddress ?? undefined,
+        userAgent: userAgent ?? undefined,
       }));
 
       await logBulkAuditEvents(auditEvents);

@@ -10,7 +10,7 @@ import { z } from 'zod';
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: { vendorId: string } }
+  { params }: { params: Promise<{ vendorId: string }> }
 ) {
   try {
     const session = await auth();
@@ -18,8 +18,10 @@ export async function GET(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    const { vendorId } = await params;
+
     const vendor = await prisma.vendor.findUnique({
-      where: { id: params.vendorId },
+      where: { id: vendorId },
       include: {
         templates: {
           orderBy: [{ isActive: 'desc' }, { createdAt: 'desc' }],
@@ -45,7 +47,7 @@ export async function GET(
 
     // Get latest invoice date if any
     const latestInvoice = await prisma.invoice.findFirst({
-      where: { vendorId: params.vendorId },
+      where: { vendorId: vendorId },
       orderBy: { createdAt: 'desc' },
       select: { createdAt: true },
     });
@@ -73,7 +75,7 @@ export async function GET(
  */
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { vendorId: string } }
+  { params }: { params: Promise<{ vendorId: string }> }
 ) {
   try {
     const session = await auth();
@@ -81,8 +83,10 @@ export async function PATCH(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    const { vendorId } = await params;
+
     const vendor = await prisma.vendor.findUnique({
-      where: { id: params.vendorId },
+      where: { id: vendorId },
     });
 
     if (!vendor) {
@@ -105,7 +109,7 @@ export async function PATCH(
         where: {
           userId: session.user.id,
           name: validatedData.name,
-          id: { not: params.vendorId },
+          id: { not: vendorId },
         },
       });
 
@@ -118,7 +122,7 @@ export async function PATCH(
     }
 
     const updatedVendor = await prisma.vendor.update({
-      where: { id: params.vendorId },
+      where: { id: vendorId },
       data: {
         ...(validatedData.name && { name: validatedData.name }),
         ...(validatedData.description !== undefined && {
@@ -159,7 +163,7 @@ export async function PATCH(
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json(
-        { error: 'Invalid input data', details: error.errors },
+        { error: 'Invalid input data', details: error.issues },
         { status: 400 }
       );
     }
@@ -178,7 +182,7 @@ export async function PATCH(
  */
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { vendorId: string } }
+  { params }: { params: Promise<{ vendorId: string }> }
 ) {
   try {
     const session = await auth();
@@ -186,8 +190,10 @@ export async function DELETE(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    const { vendorId } = await params;
+
     const vendor = await prisma.vendor.findUnique({
-      where: { id: params.vendorId },
+      where: { id: vendorId },
     });
 
     if (!vendor) {
@@ -202,7 +208,7 @@ export async function DELETE(
     }
 
     await prisma.vendor.delete({
-      where: { id: params.vendorId },
+      where: { id: vendorId },
     });
 
     return NextResponse.json({

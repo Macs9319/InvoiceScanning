@@ -30,19 +30,19 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     AzureADProvider({
       clientId: process.env.AZURE_AD_CLIENT_ID!,
       clientSecret: process.env.AZURE_AD_CLIENT_SECRET!,
-      tenantId: process.env.AZURE_AD_TENANT_ID || "common",
+      issuer: `https://login.microsoftonline.com/${process.env.AZURE_AD_TENANT_ID || "common"}/v2.0`,
       allowDangerousEmailAccountLinking: true,
     }),
-    AppleProvider({
-      clientId: process.env.APPLE_ID!,
-      clientSecret: {
-        appleId: process.env.APPLE_ID!,
-        teamId: process.env.APPLE_TEAM_ID!,
-        privateKey: process.env.APPLE_PRIVATE_KEY!,
-        keyId: process.env.APPLE_KEY_ID!,
-      },
-      allowDangerousEmailAccountLinking: true,
-    }),
+    // Apple Sign-In requires a pre-generated client secret JWT
+    // Generate using: https://developer.apple.com/documentation/sign_in_with_apple/generate_and_validate_tokens
+    // For now, conditionally include if APPLE_CLIENT_SECRET is set
+    ...(process.env.APPLE_ID && process.env.APPLE_CLIENT_SECRET ? [
+      AppleProvider({
+        clientId: process.env.APPLE_ID,
+        clientSecret: process.env.APPLE_CLIENT_SECRET,
+        allowDangerousEmailAccountLinking: true,
+      })
+    ] : []),
     Credentials({
       name: "credentials",
       credentials: {

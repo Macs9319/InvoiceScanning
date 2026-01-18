@@ -30,7 +30,7 @@ export async function POST(request: NextRequest) {
     // 4. Create request in database
     const uploadRequest = await prisma.uploadRequest.create({
       data: {
-        userId: session.user.id,
+        userId: session.user!.id,
         title,
         description: validatedData.description,
         defaultVendorId: validatedData.defaultVendorId,
@@ -51,7 +51,7 @@ export async function POST(request: NextRequest) {
     const { ipAddress, userAgent } = extractRequestMetadata(request);
     await logAuditEvent({
       requestId: uploadRequest.id,
-      userId: session.user.id,
+      userId: session.user!.id,
       eventType: AuditEventTypes.REQUEST_CREATED,
       eventCategory: AuditEventCategories.REQUEST_LIFECYCLE,
       severity: 'info',
@@ -65,8 +65,8 @@ export async function POST(request: NextRequest) {
       targetType: 'request',
       targetId: uploadRequest.id,
       newValue: uploadRequest,
-      ipAddress,
-      userAgent,
+      ipAddress: ipAddress ?? undefined,
+      userAgent: userAgent ?? undefined,
     });
 
     return NextResponse.json({
@@ -124,7 +124,7 @@ export async function GET(request: NextRequest) {
 
     // 3. Build where clause for filtering
     const where: any = {
-      userId: session.user.id,
+      userId: session.user!.id,
     };
 
     // Status filter

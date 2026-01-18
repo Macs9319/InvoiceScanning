@@ -49,6 +49,10 @@ export interface InvoiceWithLineItems {
     name: string;
     email: string | null;
   } | null;
+  processedWithVision: boolean;
+  visionApiCost: number | null;
+  isScanned: boolean;
+  textDensity: number | null;
   lineItems: {
     id: string;
     description: string;

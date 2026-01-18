@@ -7,8 +7,8 @@ import { VendorTemplate } from '@prisma/client';
  * Build a dynamic Zod schema that extends the base invoice schema
  * with custom fields from the vendor template
  */
-export function buildDynamicSchema(template?: VendorTemplate | null): z.ZodType<any> {
-  let schema: z.ZodType<any> = ExtractedInvoiceSchema;
+export function buildDynamicSchema(template?: VendorTemplate | null): z.ZodObject<any, any> {
+  let schema: z.ZodObject<any, any> = ExtractedInvoiceSchema as z.ZodObject<any, any>;
 
   if (!template || !template.customFields) {
     return schema;

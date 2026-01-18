@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
     const requests = await prisma.uploadRequest.findMany({
       where: {
         id: { in: validatedData.requestIds },
-        userId: session.user.id,
+        userId: session.user!.id,
       },
       include: {
         _count: {
@@ -67,8 +67,9 @@ export async function POST(request: NextRequest) {
 
     // 6. Log audit events
     const { ipAddress, userAgent } = extractRequestMetadata(request);
+    const userId = session.user!.id; // Safe: auth checked above
     const auditEvents = requests.map(req => ({
-      userId: session.user.id,
+      userId,
       eventType: AuditEventTypes.REQUEST_DELETED,
       eventCategory: AuditEventCategories.REQUEST_LIFECYCLE,
       severity: 'warning' as const,
@@ -79,8 +80,8 @@ export async function POST(request: NextRequest) {
       targetType: 'request',
       targetId: req.id,
       previousValue: req,
-      ipAddress,
-      userAgent,
+      ipAddress: ipAddress ?? undefined,
+      userAgent: userAgent ?? undefined,
     }));
 
     await logBulkAuditEvents(auditEvents);
