@@ -13,7 +13,7 @@ import {
     Settings,
     LogOut,
     UserCircle,
-    Menu,
+    FileText,
 } from "lucide-react";
 
 export function Sidebar() {
@@ -56,22 +56,30 @@ export function Sidebar() {
 
     return (
         <div className="flex h-full w-64 flex-col border-r bg-card text-card-foreground">
-            <div className="flex h-16 items-center border-b px-6">
-                <h2 className="text-xl font-bold tracking-tight">Invoice Scanner</h2>
+            <div className="flex h-16 items-center gap-3 border-b px-6">
+                <div className="w-9 h-9 rounded-xl bg-primary flex items-center justify-center">
+                    <FileText className="w-5 h-5 text-white" />
+                </div>
+                <div>
+                    <h2 className="text-base font-bold tracking-tight">Invoice Scanner</h2>
+                </div>
             </div>
 
             <div className="flex-1 overflow-y-auto py-4">
-                <nav className="grid gap-1 px-2">
+                <nav className="grid gap-1 px-3">
                     {links.map((link) => (
                         <Link key={link.href} href={link.href}>
                             <Button
                                 variant={link.active ? "secondary" : "ghost"}
                                 className={cn(
-                                    "w-full justify-start gap-2",
-                                    link.active && "bg-secondary"
+                                    "w-full justify-start gap-3 h-10",
+                                    link.active && "bg-primary/10 text-primary hover:bg-primary/15"
                                 )}
                             >
-                                <link.icon className="h-4 w-4" />
+                                <link.icon className={cn(
+                                    "h-4 w-4",
+                                    link.active && "text-primary"
+                                )} />
                                 {link.label}
                             </Button>
                         </Link>
@@ -81,9 +89,9 @@ export function Sidebar() {
 
             <div className="border-t p-4">
                 <Link href="/profile">
-                    <div className="flex items-center gap-2 px-2 py-4 hover:bg-muted/50 rounded-md cursor-pointer transition-colors mb-2">
-                        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-muted">
-                            <UserCircle className="h-5 w-5" />
+                    <div className="flex items-center gap-3 px-2 py-3 hover:bg-muted/50 rounded-lg cursor-pointer transition-colors mb-2">
+                        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary text-primary-foreground font-medium text-sm">
+                            {session?.user?.name?.charAt(0).toUpperCase() || session?.user?.email?.charAt(0).toUpperCase() || "U"}
                         </div>
                         <div className="flex flex-col overflow-hidden">
                             <span className="truncate text-sm font-medium">

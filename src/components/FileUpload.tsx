@@ -2,7 +2,7 @@
 
 import { useCallback, useState } from "react";
 import { useDropzone } from "react-dropzone";
-import { Upload, FileText, X } from "lucide-react";
+import { Upload, FileText, X, File } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { FileProgressList, type FileProgress } from "@/components/FileProgressList";
@@ -26,6 +26,7 @@ export default function FileUpload({ onFilesUploaded }: FileUploadProps) {
     onDrop,
     accept: {
       "application/pdf": [".pdf"],
+      "image/*": [".png", ".jpg", ".jpeg"],
     },
     maxSize: 10 * 1024 * 1024, // 10MB
   });
@@ -141,72 +142,91 @@ export default function FileUpload({ onFilesUploaded }: FileUploadProps) {
 
   return (
     <div className="space-y-4">
-      <Card className="p-8">
-        <div
-          {...getRootProps()}
-          className={`border-2 border-dashed rounded-lg p-12 text-center cursor-pointer transition-colors ${
-            isDragActive
-              ? "border-primary bg-primary/5"
-              : "border-gray-300 hover:border-primary"
-          }`}
-        >
-          <input {...getInputProps()} />
-          <Upload className="w-12 h-12 mx-auto mb-4 text-gray-400" />
+      <div
+        {...getRootProps()}
+        className={`border-2 border-dashed rounded-xl p-12 text-center cursor-pointer transition-all duration-200 ${
+          isDragActive
+            ? "border-primary bg-primary/5 scale-[1.01]"
+            : "border-border hover:border-primary/50 hover:bg-muted/30"
+        }`}
+      >
+        <input {...getInputProps()} />
+        <div className="flex flex-col items-center gap-4">
+          <div className={`w-16 h-16 rounded-2xl flex items-center justify-center transition-colors ${
+            isDragActive ? "bg-primary" : "bg-primary"
+          }`}>
+            <Upload className="w-8 h-8 text-white" />
+          </div>
           {isDragActive ? (
-            <p className="text-lg font-medium">Drop the files here...</p>
+            <p className="text-lg font-semibold text-primary">Drop the files here...</p>
           ) : (
-            <div>
-              <p className="text-lg font-medium mb-2">
-                Drag and drop PDF files here
+            <div className="space-y-2">
+              <p className="text-lg font-semibold text-foreground">
+                Drop your files here
               </p>
               <p className="text-sm text-muted-foreground">
-                or click to select files (max 10MB per file)
+                or click to browse files
               </p>
             </div>
           )}
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <FileText className="w-4 h-4" />
+            <span className="text-sm">PDF files and images supported</span>
+          </div>
         </div>
-      </Card>
+      </div>
 
       {files.length > 0 && (
-        <Card className="p-4">
-          <h3 className="font-semibold mb-3">Selected Files ({files.length})</h3>
-          <div className="space-y-2">
+        <Card className="border shadow-sm">
+          <div className="p-4 border-b">
+            <div className="flex items-center gap-2">
+              <FileText className="w-4 h-4 text-muted-foreground" />
+              <h3 className="font-semibold">Selected Files ({files.length})</h3>
+            </div>
+          </div>
+          <div className="p-4 space-y-2">
             {files.map((file, index) => (
               <div
                 key={index}
-                className="flex items-center justify-between p-2 bg-secondary rounded"
+                className="flex items-center justify-between p-3 bg-muted/50 rounded-lg"
               >
-                <div className="flex items-center gap-2">
-                  <FileText className="w-4 h-4" />
-                  <span className="text-sm">{file.name}</span>
-                  <span className="text-xs text-muted-foreground">
-                    ({(file.size / 1024).toFixed(1)} KB)
-                  </span>
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
+                    <FileText className="w-4 h-4 text-primary" />
+                  </div>
+                  <div>
+                    <span className="text-sm font-medium">{file.name}</span>
+                    <span className="text-xs text-muted-foreground ml-2">
+                      ({(file.size / 1024).toFixed(1)} KB)
+                    </span>
+                  </div>
                 </div>
                 <Button
                   variant="ghost"
                   size="sm"
                   onClick={() => removeFile(index)}
                   disabled={uploading}
+                  className="h-8 w-8 p-0 hover:bg-destructive/10 hover:text-destructive"
                 >
                   <X className="w-4 h-4" />
                 </Button>
               </div>
             ))}
-          </div>
 
-          <Button
-            onClick={handleUpload}
-            disabled={uploading}
-            className="w-full mt-4"
-          >
-            {uploading ? "Uploading..." : `Upload ${files.length} file(s)`}
-          </Button>
+            <Button
+              onClick={handleUpload}
+              disabled={uploading}
+              className="w-full mt-4"
+              size="lg"
+            >
+              {uploading ? "Uploading..." : `Upload ${files.length} file(s)`}
+            </Button>
+          </div>
         </Card>
       )}
 
       {error && (
-        <Card className="p-4 bg-destructive/10 border-destructive">
+        <Card className="p-4 bg-destructive/10 border-destructive/30">
           <p className="text-sm text-destructive">{error}</p>
         </Card>
       )}

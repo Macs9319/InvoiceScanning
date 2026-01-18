@@ -4,7 +4,7 @@ import { FileText, CheckCircle, XCircle, Loader2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 
-export type ProcessingStatus = "processing" | "completed" | "failed";
+export type ProcessingStatus = "processing" | "queued" | "completed" | "failed";
 
 export interface ProcessingFile {
   id: string;

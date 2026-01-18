@@ -24,8 +24,9 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { DocumentSummaryBanner } from "@/components/DocumentSummaryBanner";
 import { InvoiceWithLineItems } from "@/types/invoice";
-import { Loader2, CheckCircle2, Trash2 } from "lucide-react";
+import { Loader2, CheckCircle2, Trash2, FileText, Info, Tag } from "lucide-react";
 
 const ITEMS_PER_PAGE = 10;
 
@@ -485,25 +486,11 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-background">
-      <div className="container mx-auto py-8 px-4">
-        <div className="max-w-6xl mx-auto space-y-8">
-          <div className="flex items-center justify-between">
-            <div className="text-center flex-1">
-              <h1 className="text-4xl font-bold mb-2">Invoice Scanner</h1>
-              <p className="text-muted-foreground">
-                AI-Powered PDF Processing - Upload invoices, receipts, and payment documents
-              </p>
-            </div>
-          </div>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Upload Documents</CardTitle>
-              <CardDescription>
-                Upload one or more PDF invoices/receipts for processing with AI
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
+      <div className="container mx-auto py-6 px-4">
+        <div className="max-w-5xl mx-auto space-y-6">
+          {/* File Upload Section */}
+          <Card className="border shadow-sm">
+            <CardContent className="pt-6">
               <FileUpload onFilesUploaded={handleFilesUploaded} />
 
               {uploadedFiles.length > 0 && !processed && (
@@ -541,19 +528,26 @@ export default function Home() {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
+          {/* Document Summary Banner - shown when there are processed invoices */}
+          {invoices.length > 0 && (
+            <DocumentSummaryBanner
+              title={`${invoices.length} Invoice${invoices.length !== 1 ? 's' : ''} Processed`}
+              subtitle="PROCESSING SUMMARY"
+            />
+          )}
+
+          {/* Processed Invoices Section */}
+          <Card className="border shadow-sm">
+            <CardHeader className="border-b">
               <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle>Processed Invoices</CardTitle>
-                  <CardDescription>
-                    View and export all processed invoice data
-                  </CardDescription>
+                <div className="flex items-center gap-2">
+                  <FileText className="w-5 h-5 text-muted-foreground" />
+                  <CardTitle className="text-lg">Processed Invoices</CardTitle>
                 </div>
                 {invoices.length > 0 && <ExportButtons />}
               </div>
             </CardHeader>
-            <CardContent>
+            <CardContent className="pt-4">
               {invoices.length > 0 && !loadingInvoices && (
                 <InvoiceFilters
                   filters={filters}

@@ -20,6 +20,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { ScannedDocumentBadge } from "@/components/ScannedDocumentBadge";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -32,9 +33,10 @@ import {
 } from "@/components/ui/alert-dialog";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { InvoiceWithLineItems } from "@/types/invoice";
-import { Trash2, Eye, RefreshCw, AlertCircle, Download, Clock, Loader2 } from "lucide-react";
+import { Trash2, Eye, RefreshCw, AlertCircle, Download, Clock, Loader2, Scan } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { InvoiceDetailDialog } from "@/components/InvoiceDetailDialog";
+import { VisionProcessingModal } from "@/components/VisionProcessingModal";
 
 interface InvoiceTableProps {
   invoices: InvoiceWithLineItems[];
@@ -62,6 +64,8 @@ export default function InvoiceTable({
   const [selectedInvoice, setSelectedInvoice] = useState<InvoiceWithLineItems | null>(null);
   const [retryingIds, setRetryingIds] = useState<Set<string>>(new Set());
   const [downloadingIds, setDownloadingIds] = useState<Set<string>>(new Set());
+  const [visionModalOpen, setVisionModalOpen] = useState(false);
+  const [invoiceForVision, setInvoiceForVision] = useState<InvoiceWithLineItems | null>(null);
 
   const handleToggleSelection = (id: string) => {
     if (!onSelectionChange) return;
@@ -192,11 +196,17 @@ export default function InvoiceTable({
           }
 
           return (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <Badge variant={variant} className={badgeClassName}>
                 {icon}
                 {status}
               </Badge>
+              {info.row.original.isScanned && (
+                <ScannedDocumentBadge
+                  textDensity={info.row.original.textDensity}
+                  showIcon={true}
+                />
+              )}
             </div>
           );
         },
@@ -241,6 +251,17 @@ export default function InvoiceTable({
                   <RefreshCw className={`h-4 w-4 ${isRetrying ? 'animate-spin' : ''}`} />
                 </Button>
               )}
+              {invoice.status === "failed" && invoice.isScanned && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => handleVisionClick(invoice)}
+                  className="h-8 w-8 text-blue-600 hover:text-blue-700"
+                  title="Reprocess with Vision API"
+                >
+                  <Scan className="h-4 w-4" />
+                </Button>
+              )}
               <Button
                 variant="ghost"
                 size="icon"
@@ -281,6 +302,18 @@ export default function InvoiceTable({
   const handleDeleteClick = (id: string) => {
     setInvoiceToDelete(id);
     setDeleteDialogOpen(true);
+  };
+
+  const handleVisionClick = (invoice: InvoiceWithLineItems) => {
+    setInvoiceForVision(invoice);
+    setVisionModalOpen(true);
+  };
+
+  const handleVisionSuccess = () => {
+    // Refresh the invoice list after successful Vision processing
+    // The parent component should handle this via polling or manual refresh
+    setVisionModalOpen(false);
+    setInvoiceForVision(null);
   };
 
   const handleDownloadClick = async (id: string, fileName: string) => {
@@ -443,6 +476,13 @@ export default function InvoiceTable({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <VisionProcessingModal
+        invoice={invoiceForVision}
+        open={visionModalOpen}
+        onOpenChange={setVisionModalOpen}
+        onSuccess={handleVisionSuccess}
+      />
     </>
   );
 }

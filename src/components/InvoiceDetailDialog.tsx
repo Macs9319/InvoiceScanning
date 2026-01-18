@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { InvoiceWithLineItems } from "@/types/invoice";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Building2, Mail, Download } from "lucide-react";
+import { Building2, Mail, Download, Eye } from "lucide-react";
 import Link from "next/link";
 
 interface InvoiceDetailDialogProps {
@@ -119,9 +119,17 @@ export function InvoiceDetailDialog({
                 </div>
                 <div>
                   <p className="text-muted-foreground">Status</p>
-                  <Badge variant={getStatusVariant(invoice.status)}>
-                    {invoice.status}
-                  </Badge>
+                  <div className="flex flex-wrap gap-2 items-center">
+                    <Badge variant={getStatusVariant(invoice.status)}>
+                      {invoice.status}
+                    </Badge>
+                    {invoice.processedWithVision && (
+                      <Badge variant="outline" className="border-blue-500 text-blue-700 bg-blue-50">
+                        <Eye className="mr-1 h-3 w-3" />
+                        Vision Processed
+                      </Badge>
+                    )}
+                  </div>
                 </div>
                 <div>
                   <p className="text-muted-foreground">File Name</p>
@@ -129,6 +137,69 @@ export function InvoiceDetailDialog({
                 </div>
               </div>
             </div>
+
+            {/* Vision API Processing Information */}
+            {invoice.processedWithVision && (
+              <div>
+                <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+                  <Eye className="h-4 w-4 text-blue-600" />
+                  Vision API Processing
+                </h3>
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <p className="text-muted-foreground mb-1">Processing Method</p>
+                      <Badge variant="outline" className="border-blue-500 text-blue-700">
+                        <Eye className="mr-1 h-3 w-3" />
+                        Vision API
+                      </Badge>
+                    </div>
+                    {invoice.visionApiCost && (
+                      <div>
+                        <p className="text-muted-foreground mb-1">API Cost</p>
+                        <p className="font-semibold text-blue-700">
+                          ${invoice.visionApiCost.toFixed(4)}
+                        </p>
+                      </div>
+                    )}
+                    {invoice.isScanned && (
+                      <div className="col-span-2">
+                        <p className="text-xs text-muted-foreground">
+                          ℹ️ This invoice was processed using Vision API because it was detected as a scanned or image-based document.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Scanned Document Detection */}
+            {invoice.isScanned && !invoice.processedWithVision && (
+              <div>
+                <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+                  <span className="inline-block w-2 h-2 rounded-full bg-orange-500"></span>
+                  Scanned Document Detection
+                </h3>
+                <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
+                  <div className="space-y-3 text-sm">
+                    <div>
+                      <p className="font-semibold text-orange-800">Scanned Document Detected</p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        This document has low text density ({invoice.textDensity ? Math.round(invoice.textDensity) : 'N/A'} chars/page)
+                      </p>
+                    </div>
+                    {invoice.status === 'failed' && (
+                      <div className="pt-2 border-t border-orange-200">
+                        <p className="text-xs text-muted-foreground">
+                          💡 Tip: Use the "Reprocess with Vision" button in the table to process this scanned document with Vision API for better results.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Vendor Information */}
             {invoice.vendor && (

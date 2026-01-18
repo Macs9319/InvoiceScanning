@@ -1,14 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useState, Suspense } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Loader2, AlertCircle, CheckCircle2 } from "lucide-react";
+import { Loader2, AlertCircle, CheckCircle2, FileText } from "lucide-react";
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const callbackUrl = searchParams.get("callbackUrl") || "/";
@@ -83,14 +83,21 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
-      <Card className="w-full max-w-md">
-        <CardHeader>
-          <CardTitle>{isLogin ? "Sign In" : "Create Account"}</CardTitle>
-          <CardDescription>
-            {isLogin
-              ? "Enter your credentials to access your invoices"
-              : "Create an account to start managing invoices"}
-          </CardDescription>
+      <Card className="w-full max-w-md border shadow-lg">
+        <CardHeader className="space-y-4 pb-4">
+          <div className="flex justify-center">
+            <div className="w-14 h-14 rounded-2xl bg-primary flex items-center justify-center">
+              <FileText className="w-7 h-7 text-white" />
+            </div>
+          </div>
+          <div className="text-center space-y-1">
+            <CardTitle className="text-2xl">{isLogin ? "Welcome back" : "Create Account"}</CardTitle>
+            <CardDescription>
+              {isLogin
+                ? "Sign in to your account to continue"
+                : "Create an account to start managing invoices"}
+            </CardDescription>
+          </div>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -259,5 +266,23 @@ export default function LoginPage() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center bg-background p-4">
+        <Card className="w-full max-w-md">
+          <CardContent className="pt-6">
+            <div className="flex justify-center">
+              <Loader2 className="h-8 w-8 animate-spin" />
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    }>
+      <LoginForm />
+    </Suspense>
   );
 }
